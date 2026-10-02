@@ -66,7 +66,13 @@ GAP_TOLERANCE_HZ = 300_000
 MIN_CLUSTER_BINS = 3
 MIN_CLUSTER_DENSITY = 0.5
 
-ANALOG_MIN_BANDWIDTH_MHZ = 2.0
+# Real analog video is ~8-20MHz wide. At 2MHz, strong Bluetooth LE
+# advertising (2402/2426/2480MHz, ~2MHz wide when close to the antenna)
+# was being reported as "Analog video link" at 95% - seen live, and 7 of
+# 8 drone-off false matches in a real recording were these.
+ANALOG_MIN_BANDWIDTH_MHZ = 5.0
+# Calibrated matches must be at least this wide too (same Bluetooth issue).
+SIGNATURE_MIN_BANDWIDTH_MHZ = 3.0
 
 SIGNATURES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "drone_signatures.json")
 
@@ -331,7 +337,8 @@ def matches_signature(cluster, sig, band):
     on_channel = abs(cluster["peak_mhz"] - ch) <= tol
     if not on_channel and not sig.get("any_frequency"):
         return None
-    ok = (_in(cluster["bandwidth_mhz"], sig["bandwidth_mhz"])
+    bw_lo = max(sig["bandwidth_mhz"][0], SIGNATURE_MIN_BANDWIDTH_MHZ)
+    ok = (bw_lo <= cluster["bandwidth_mhz"] <= sig["bandwidth_mhz"][1]
           and cluster["crest_factor_db"] >= sig["min_crest_factor_db"]
           and cluster["edge_drop_db"] >= sig["min_edge_drop_db"]
           and cluster["above_noise_db"] >= sig["min_above_noise_db"])

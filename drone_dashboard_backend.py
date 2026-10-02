@@ -233,13 +233,8 @@ def fuse_band(band, dets, clusters, state):
         # fragments still mustn't show up as separate "analog" signals.
         span = state.link_span
         state.link_span_ttl -= 1
-    elif cal_unconfirmed:
-        sig, best = cal_unconfirmed
-        best["drone_type"] = f"Possible '{sig['name']}' - unconfirmed (1 channel so far)"
-        best["confidence"] = 0.5
-        best["threat_level"] = "low"
-        best["track_key"] = f"link:{band}:unconfirmed"
-        out.append(best)
+    # A single-channel calibrated sighting (not yet seen hopping) isn't
+    # listed - live, these fired on ordinary 2.4GHz traffic with the drone off.
 
     for d in dets:
         if d["method"] != "shape" or d["confidence"] < MIN_SHAPE_CONFIDENCE:

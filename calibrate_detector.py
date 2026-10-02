@@ -179,7 +179,7 @@ def learn_signature(name, band, regions, drone_b, base_b, any_frequency):
         "channel_tolerance_mhz": CHANNEL_TOLERANCE_MHZ,
         # One-sided minimums with a margin rather than tight ranges: the
         # drone further away (weaker) measures less peaked than up close.
-        "bandwidth_mhz": [round(max(0.5, pct(bw, 5) * 0.7), 2), round(pct(bw, 95) * 1.3, 2)],
+        "bandwidth_mhz": [round(max(rf.SIGNATURE_MIN_BANDWIDTH_MHZ, pct(bw, 5) * 0.7), 2), round(pct(bw, 95) * 1.3, 2)],
         "min_crest_factor_db": round(pct([c["crest_factor_db"] for c in on_ch], 10) - 2.0, 1),
         "min_edge_drop_db": round(pct([c["edge_drop_db"] for c in on_ch], 10) - 3.0, 1),
         "min_above_noise_db": MIN_CANDIDATE_ABOVE_NOISE_DB,
