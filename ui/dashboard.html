@@ -899,8 +899,9 @@
                             <b>strongest reading in the last 5 s</b> - sensors sweep at slightly different moments and a hopping link is on a
                             different channel at each look, so single instants wouldn't compare fairly. <b>Closest</b> = the loudest sensor, if it is
                             at least 6 dB above the median of the others. Rows on a current drone detection's frequencies are highlighted.
-                            With one sensor there's nothing to compare - this needs 2+.
+                            With one sensor there's nothing to compare - this needs 2+.<br><b>Nearest overall</b> (the box below) ranks each sensor by its <b>total energy across the whole band</b> - per-MHz power swings with sweep timing, but the band total cancels that and is what actually tracks distance.
                         </div>
+                        <div id="powerOverall" style="margin-bottom:12px; padding:12px 14px; border-radius:10px; background:rgba(79,172,254,0.08); border:1px solid rgba(79,172,254,0.25); font-size:0.95em;"></div>
                         <div class="detections-table" style="max-height: 640px; overflow: auto; max-width: 100%;"><table style="white-space: nowrap;">
                             <thead id="powerHead"></thead><tbody id="powerBody"><tr><td>Waiting for data...</td></tr></tbody></table></div>
                     </div>
@@ -1584,6 +1585,23 @@
             let t;
             try { t = (await (await fetch(`${API_URL}/power?band=${encodeURIComponent(sel.value)}`)).json()).data; } catch (e) { return; }
             const show = document.getElementById('powerShow').value;
+            const ov = document.getElementById('powerOverall');
+            if (ov) {
+                const names = Object.keys(t.overall || {});
+                if (names.length < 2) {
+                    ov.innerHTML = `Nearest overall needs 2+ sensors on this band (have ${names.length}).`;
+                } else {
+                    const ranked = names.map(n => [n, t.overall[n]]).sort((a, b) => b[1] - a[1]);
+                    const bars = ranked.map(([n, v], i) => {
+                        const win = (n === t.closest_overall);
+                        return `<span style="margin-right:16px; ${win ? 'font-weight:700;color:#ff6b6b' : ''}">${win ? '\u25B6 ' : ''}${n}: ${v} dB</span>`;
+                    }).join('');
+                    const head = t.closest_overall
+                        ? `<b style="color:#ff6b6b">Nearest sensor: ${t.closest_overall}</b> (+${t.overall_margin_db} dB total over the others) &middot; `
+                        : `<b>No clear nearest sensor</b> (all within ${t.overall_margin_db == null ? '-' : t.overall_margin_db} dB) &middot; `;
+                    ov.innerHTML = head + bars;
+                }
+            }
             const rows = t.rows.filter(r => show === 'all' || (show === 'active' ? r.active : r.detections.length));
             const maxLv = Math.max(10, ...t.rows.map(r => r.top));
             document.getElementById('powerHead').innerHTML = `<tr><th>MHz</th>${t.sensors.map(s => `<th>${s}</th>`).join('')}

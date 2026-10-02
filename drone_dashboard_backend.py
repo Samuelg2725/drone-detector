@@ -442,6 +442,7 @@ def video_public():
 POWER_WINDOW_S = 5.0
 POWER_ACTIVE_DB = 10.0
 CLOSEST_MARGIN_DB = 6.0
+OVERALL_MARGIN_DB = 3.0
 power_history = {}            # (sensor, band) -> deque[(t, start_mhz, levels per MHz)]
 
 
@@ -503,7 +504,25 @@ def power_table(band):
                        if any(abs(c - (mhz + 0.5)) <= 1.0 for c in (d.get("channels_seen") or [d["frequency_mhz"]]))})
         rows.append({"mhz": mhz, "levels": levels, "top": top, "top_sensor": top_sid, "margin_db": margin,
                      "closest": closest, "active": top >= POWER_ACTIVE_DB, "detections": dets})
-    return {"band": band, "sensors": sorted(per_sensor), "rows": rows}
+    # Overall "nearest sensor": total energy each sensor received across the whole
+    # band in the window. Per-MHz power swings wildly with sweep timing (each SDR
+    # looks at a channel at a different instant), but a nearer sensor collects more
+    # TOTAL energy whatever channel a hopper is on, so the band sum cancels that
+    # timing noise and is the metric that actually tracks distance.
+    overall = {}
+    for sid, (l0, lv) in per_sensor.items():
+        finite = lv[np.isfinite(lv)]
+        if finite.size:
+            overall[sid] = round(float(10.0 * np.log10(np.power(10.0, finite / 10.0).sum())), 1)
+    ranked_overall = sorted(overall.items(), key=lambda kv: -kv[1])
+    closest_overall, overall_margin = None, None
+    if len(ranked_overall) >= 2:
+        others = [v for _, v in ranked_overall[1:]]
+        overall_margin = round(ranked_overall[0][1] - float(np.median(others)), 1)
+        if overall_margin >= OVERALL_MARGIN_DB:
+            closest_overall = ranked_overall[0][0]
+    return {"band": band, "sensors": sorted(per_sensor), "rows": rows,
+            "overall": overall, "closest_overall": closest_overall, "overall_margin_db": overall_margin}
 
 
 def detection_closest_by_power(d):
