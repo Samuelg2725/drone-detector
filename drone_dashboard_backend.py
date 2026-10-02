@@ -108,26 +108,39 @@ def run_ws_server():
 
 
 def current_metrics():
+    now = time.time()
+    active = [d for d in detections if is_active(d, now)]
     return {
         "total_detections": len(detections),
-        "active_threats": sum(1 for d in detections if d["threat_level"] == "high"),
+        "active_threats": sum(1 for d in active if d["threat_level"] == "high"),
+        "active_drones": len(active),
+        # Live value for the confidence chart: strongest active track, 0 if none.
+        "current_confidence": max((d["confidence"] for d in active), default=0.0),
         "avg_confidence": round(sum(d["confidence"] for d in detections) / len(detections), 3) if detections else 0,
-        "system_uptime": time.time() - start_time,
+        "system_uptime": now - start_time,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
 
 
 # ======================== HackRF scanning loop (own thread) ======================== #
 
-# The same signal is seen on every sweep (~once a second). Treat a match
-# within this window, same band/label, within 2MHz, as the SAME detection
-# (bump its hit count) instead of flooding the table and alerts.
-REPEAT_WINDOW_S = 15.0
+# A drone is a "track": ACTIVE while it keeps being seen, GONE once it
+# hasn't been seen for TRACK_TIMEOUT_S (~10 sweeps with both bands - a
+# real drone recording never went more than one sweep without a match).
+# A sighting after it's gone starts a new track.
+TRACK_TIMEOUT_S = 12.0
+
+
+def is_active(d, now=None):
+    return ((now or time.time()) - d["_last_seen"]) <= TRACK_TIMEOUT_S
 
 
 def record_detection(det):
+    """Merge into the matching ACTIVE track, or start a new one. Returns
+    True if this is a new track."""
     now = time.time()
     for d in detections:
-        if now - d["_last_seen"] > REPEAT_WINDOW_S:
+        if not is_active(d, now):
             continue
         same_track = det.get("track_key") and d.get("track_key") == det["track_key"]
         same_signal = (d["drone_type"] == det["drone_type"]
@@ -139,7 +152,9 @@ def record_detection(det):
             d["hits"] += 1
             d["last_seen"] = time.strftime("%Y-%m-%dT%H:%M:%S")
             d["confidence"] = max(d["confidence"], det["confidence"])
-            d["frequency_mhz"] = det["frequency_mhz"]
+            d["threat_level"] = rf.threat_level(d["confidence"])
+            for k in ("frequency_mhz", "power_db", "above_noise_db", "bandwidth_mhz", "estimated_distance_m"):
+                d[k] = det[k]
             if det.get("channels_seen"):
                 d["channels_seen"] = det["channels_seen"]
             return False
@@ -148,14 +163,46 @@ def record_detection(det):
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "last_seen": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "hits": 1,
+        "_first_seen": now,
         "_last_seen": now,
     })
     detections.appendleft(det)
     return True
 
 
+def end_lost_tracks():
+    """Mark tracks that just went quiet as GONE and raise an alert."""
+    now = time.time()
+    for d in detections:
+        if d.get("_ended") or is_active(d, now):
+            continue
+        d["_ended"] = True
+        alert = {
+            "title": "Drone signal lost",
+            "message": f"{d['drone_type']} - last seen {d['last_seen'][11:]}, "
+                       f"active for {int(d['_last_seen'] - d['_first_seen'])}s",
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "severity": "info",
+        }
+        alerts.appendleft(alert)
+        broadcast({"type": "alert", "data": alert})
+
+
+def current_tracks(max_age_s=600):
+    """Active tracks first, then recently ended ones."""
+    now = time.time()
+    tracks = [d for d in detections if now - d["_last_seen"] <= max_age_s]
+    tracks.sort(key=lambda d: (not is_active(d, now), -d["_last_seen"]))
+    return [public(d) for d in tracks[:20]]
+
+
 def public(det):
-    return {k: v for k, v in det.items() if not k.startswith("_") and k != "track_key"}
+    now = time.time()
+    out = {k: v for k, v in det.items() if not k.startswith("_") and k != "track_key"}
+    out["status"] = "active" if is_active(det, now) else "gone"
+    out["duration_s"] = int(det["_last_seen"] - det["_first_seen"])
+    out["seen_ago_s"] = int(now - det["_last_seen"])
+    return out
 
 
 # Shape-rule matches below this confidence are mostly WiFi (they're
@@ -294,12 +341,14 @@ def scanning_loop():
             broadcast({"type": "spectrum", "data": latest_spectrum})
 
             for det in found:
+                sig = next((x for x in signatures if x["name"] == det.get("signature")), None)
+                det["estimated_distance_m"] = rf.estimate_distance_m(det["above_noise_db"], sig)
                 if not record_detection(det):
                     continue
                 broadcast({"type": "detection", "data": public(det)})
                 if det["threat_level"] == "high":
                     alert = {
-                        "title": "Possible drone signal",
+                        "title": "Drone detected",
                         "message": f"{det['drone_type']} at {det['frequency_mhz']}MHz ({det['band']}), "
                                    f"+{det['above_noise_db']}dB, ~{det['bandwidth_mhz']}MHz wide",
                         "timestamp": det["timestamp"],
@@ -319,6 +368,8 @@ def scanning_loop():
                 print(f"Sweep #{scan_stats['scans_ok']} ({scan_stats['sweep_seconds']}s) | "
                       + " | ".join(parts) + f" | drone-shaped: {hits}")
 
+            end_lost_tracks()
+            broadcast({"type": "tracks", "data": current_tracks()})
             broadcast({"type": "metrics", "data": current_metrics()})
 
         except Exception as e:
@@ -348,6 +399,11 @@ for _name in ("css", "js", "assets"):
 @app.get("/api/spectrum")
 def api_spectrum():
     return {"success": latest_spectrum is not None, "data": latest_spectrum}
+
+
+@app.get("/api/tracks")
+def api_tracks():
+    return {"success": True, "data": {"items": current_tracks()}}
 
 
 @app.get("/api/detections")

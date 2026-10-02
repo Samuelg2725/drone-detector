@@ -103,6 +103,8 @@ MIN_CANDIDATE_BW_MHZ = 1.0
 MIN_CANDIDATE_ABOVE_NOISE_DB = 12.0
 # Peaks within this distance of each other are the same channel.
 CHANNEL_TOLERANCE_MHZ = 0.6
+# How far the drone was from the antenna during calibration (--distance-m).
+REFERENCE_DISTANCE_M = 3.0
 # Sliding window (in sweeps) used to decide whether a signal hops.
 WINDOW_SWEEPS = 5
 
@@ -184,6 +186,9 @@ def learn_signature(name, band, regions, drone_b, base_b, any_frequency):
         "min_edge_drop_db": round(pct([c["edge_drop_db"] for c in on_ch], 10) - 3.0, 1),
         "min_above_noise_db": MIN_CANDIDATE_ABOVE_NOISE_DB,
         "window_sweeps": WINDOW_SWEEPS,
+        # Reference for the dashboard's rough distance estimate.
+        "reference_above_noise_db": round(pct([c["above_noise_db"] for c in on_ch], 50), 1),
+        "reference_distance_m": REFERENCE_DISTANCE_M,
         "min_channels_in_window": 1,
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "samples": len(on_ch),
@@ -278,12 +283,17 @@ def main():
     ap.add_argument("--seconds", type=int, default=45, help="recording time per phase (default 45)")
     ap.add_argument("--any-frequency", action="store_true",
                     help="match the learned shape anywhere in the band (use if your drone changes channel)")
+    ap.add_argument("--distance-m", type=float, default=3.0,
+                    help="how far the drone is from the antenna in the DRONE phase (default 3m) - "
+                         "used for the dashboard's rough distance estimate")
     ap.add_argument("--lna", type=int, default=16)
     ap.add_argument("--vga", type=int, default=20)
     ap.add_argument("--amp", action="store_true")
     ap.add_argument("--reanalyze", metavar="SESSION_JSON", help="re-run the analysis on a saved session")
     ap.add_argument("--no-save", action="store_true", help="analyse only, don't write drone_signatures.json")
     args = ap.parse_args()
+    global REFERENCE_DISTANCE_M
+    REFERENCE_DISTANCE_M = args.distance_m
 
     if args.reanalyze:
         with open(args.reanalyze) as fh:

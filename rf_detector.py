@@ -499,6 +499,26 @@ def isolate_signal(samples, hop_center_hz, sig_center_hz, bw_hz):
     return np.fft.ifft(spec).astype(np.complex64)
 
 
+# ======================== Rough distance from signal strength ======================== #
+
+# Reference point: in a real calibration recording, a 2.4GHz drone "a few
+# metres" away measured a median of ~36dB above the noise floor (LNA 16,
+# VGA 20, amp off). Signatures made by calibrate_detector.py store their
+# own reference. Path-loss exponent 2.5 sits between open air (2) and
+# indoors/cluttered (3+). This is a ROUGH estimate: the drone's transmit
+# power, antenna orientation, walls and gain settings all move it a lot.
+DEFAULT_REFERENCE_ABOVE_NOISE_DB = 36.0
+DEFAULT_REFERENCE_DISTANCE_M = 3.0
+PATH_LOSS_EXPONENT = 2.5
+
+
+def estimate_distance_m(above_noise_db, sig=None):
+    ref_db = (sig or {}).get("reference_above_noise_db", DEFAULT_REFERENCE_ABOVE_NOISE_DB)
+    ref_m = (sig or {}).get("reference_distance_m", DEFAULT_REFERENCE_DISTANCE_M)
+    d = ref_m * 10 ** ((ref_db - above_noise_db) / (10 * PATH_LOSS_EXPONENT))
+    return round(float(min(max(d, 1.0), 5000.0)), 1)
+
+
 def threat_level(conf):
     return "high" if conf > 0.8 else ("medium" if conf > 0.6 else "low")
 

@@ -292,6 +292,23 @@
             font-size: 14px;
         }
 
+        .drone-status-row {
+            display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+            padding: 12px 16px; margin-bottom: 10px; border-radius: 10px;
+            background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
+        }
+        .drone-status-row.active { border-color: #ff4444; background: rgba(255,68,68,0.08); }
+        .status-pill {
+            font-weight: 800; font-size: 0.8em; letter-spacing: 0.08em;
+            padding: 6px 12px; border-radius: 999px; white-space: nowrap;
+        }
+        .status-pill.active { background: #ff4444; color: #fff; animation: pulse 1.5s infinite; }
+        .status-pill.gone { background: #555; color: #ddd; }
+        .status-pill.clear { background: #2e7d32; color: #fff; }
+        .drone-status-main { flex: 1; min-width: 220px; }
+        .drone-status-main .label { font-weight: 600; }
+        .drone-status-main .meta { font-size: 0.85em; color: #aaa; margin-top: 3px; }
+
         .threat-badge {
             display: inline-block;
             padding: 4px 8px;
@@ -487,14 +504,14 @@
                             <i class="fas fa-exclamation-triangle"></i>
                         </div>
                         <div class="stat-value" id="activeThreats">0</div>
-                        <div class="stat-label">Active Threats</div>
+                        <div class="stat-label">Active Drones</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-icon">
                             <i class="fas fa-chart-line"></i>
                         </div>
                         <div class="stat-value" id="confidence">0%</div>
-                        <div class="stat-label">Avg Confidence</div>
+                        <div class="stat-label">Current Confidence</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-icon">
@@ -502,6 +519,18 @@
                         </div>
                         <div class="stat-value" id="uptime">0h</div>
                         <div class="stat-label">System Uptime</div>
+                    </div>
+                </div>
+
+                <!-- Active drones: live status per drone track -->
+                <div class="card" style="margin-bottom: 20px;">
+                    <div class="card-header">
+                        <h3><i class="fas fa-satellite-dish"></i> Drone Status</h3>
+                        <span style="font-size: 0.8em; color: #888;">ACTIVE while being seen · GONE after ~12s silent</span>
+                    </div>
+                    <div class="card-content" id="droneStatus">
+                        <div class="drone-status-row"><span class="status-pill clear">NO DRONES</span>
+                            <div class="drone-status-main"><div class="label">Nothing detected right now</div></div></div>
                     </div>
                 </div>
 
@@ -523,7 +552,8 @@
                     <!-- Map -->
                     <div class="card full-width">
                         <div class="card-header">
-                            <h3><i class="fas fa-map-marker-alt"></i> Live Drone Positions</h3>
+                            <h3><i class="fas fa-map-marker-alt"></i> Sensor &amp; Rough Drone Range</h3>
+                            <span style="font-size: 0.8em; color: #888;">Click the map to set where the HackRF is</span>
                             <i class="fas fa-expand" onclick="toggleFullscreen('map')"></i>
                         </div>
                         <div class="card-content">
@@ -753,6 +783,10 @@
                     break;
                 case 'metrics':
                     updateMetrics(data.data);
+                    pushConfidencePoint(data.data);
+                    break;
+                case 'tracks':
+                    updateTracks(data.data);
                     break;
                 case 'spectrum':
                     updateSpectrum(data.data);
@@ -766,19 +800,63 @@
         }
         
         // Map Initialization
-        function initMap() {
-            map = L.map('map').setView([37.7749, -122.4194], 12);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
-            }).addTo(map);
-            
-            fullMap = L.map('fullMap').setView([37.7749, -122.4194], 12);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
-            }).addTo(fullMap);
+        // Free OpenStreetMap tiles (the old CARTO tiles now need an API key).
+        // One HackRF can't locate a drone - it only knows signal strength,
+        // so the map shows YOUR sensor and a ring at the rough distance.
+        let sensorLatLng = null;
+        let sensorMarkers = [];
+        let rangeLayers = [];
+
+        function addTiles(m) {
+            L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(m);
         }
-        
-        // Chart Initialization
+
+        function setSensor(latlng, save) {
+            sensorLatLng = latlng;
+            if (save) { try { localStorage.setItem('sensorLatLng', JSON.stringify(latlng)); } catch (e) {} }
+            sensorMarkers.forEach(m => m.remove());
+            sensorMarkers = [map, fullMap].filter(Boolean).map(m => L.circleMarker(latlng, {
+                radius: 8, color: '#4facfe', fillColor: '#4facfe', fillOpacity: 0.9
+            }).bindTooltip('HackRF sensor (click the map to move)').addTo(m));
+            [map, fullMap].filter(Boolean).forEach(m => m.setView(latlng, Math.max(m.getZoom(), 16)));
+            updateRangeRings(lastTracks.filter(t => t.status === 'active'));
+        }
+
+        function updateRangeRings(active) {
+            rangeLayers.forEach(l => l.remove());
+            rangeLayers = [];
+            if (!sensorLatLng || !window.L) return;
+            active.filter(t => t.estimated_distance_m).forEach(t => {
+                [map, fullMap].filter(Boolean).forEach(m => {
+                    rangeLayers.push(L.circle(sensorLatLng, {
+                        radius: t.estimated_distance_m, color: '#ff4444', weight: 2, dashArray: '6 6', fillOpacity: 0.05
+                    }).bindTooltip(`${t.drone_type}<br>~${t.estimated_distance_m} m away - ROUGH (signal strength only, direction unknown)`).addTo(m));
+                });
+            });
+        }
+
+        function initMap() {
+            map = L.map('map').setView([51.5, -0.12], 5);
+            addTiles(map);
+            fullMap = L.map('fullMap').setView([51.5, -0.12], 5);
+            addTiles(fullMap);
+            [map, fullMap].forEach(m => m.on('click', e => setSensor([e.latlng.lat, e.latlng.lng], true)));
+
+            let saved = null;
+            try { saved = JSON.parse(localStorage.getItem('sensorLatLng')); } catch (e) {}
+            if (saved) {
+                setSensor(saved, false);
+            } else if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    pos => setSensor([pos.coords.latitude, pos.coords.longitude], true),
+                    err => console.log('Location not available - click the map to place the sensor', err),
+                    { enableHighAccuracy: true, timeout: 10000 });
+            }
+        }
+
         function initCharts() {
             const ctx = document.getElementById('confidenceChart').getContext('2d');
             confidenceChart = new Chart(ctx, {
@@ -786,7 +864,7 @@
                 data: {
                     labels: [],
                     datasets: [{
-                        label: 'Detection Confidence',
+                        label: 'Live drone confidence (0 = nothing detected)',
                         data: [],
                         borderColor: '#4facfe',
                         backgroundColor: 'rgba(79, 172, 254, 0.1)',
@@ -820,7 +898,8 @@
                         },
                         x: {
                             grid: { color: 'rgba(255,255,255,0.1)' },
-                            title: { display: true, text: 'Detection #', color: '#e0e0e0' }
+                            title: { display: true, text: 'Time (one point per sweep)', color: '#e0e0e0' },
+                            ticks: { color: '#aaa', maxTicksLimit: 8 }
                         }
                     }
                 }
@@ -954,13 +1033,9 @@
         
         async function loadDetections() {
             try {
-                const response = await fetch(`${API_URL}/detections?limit=50`);
+                const response = await fetch(`${API_URL}/tracks`);
                 const data = await response.json();
-                if (data.success && data.data) {
-                    detectionData = data.data.items || [];
-                    updateDetectionsTable(detectionData);
-                    updateConfidenceChart(detectionData);
-                }
+                if (data.success && data.data) updateTracks(data.data.items || []);
             } catch (error) {
                 console.error('Error loading detections:', error);
             }
@@ -1165,7 +1240,7 @@
             tbody.innerHTML = recent.map(d => `
                 <tr>
                     <td>${new Date(d.timestamp).toLocaleTimeString()}</td>
-                    <td>${d.drone_type || 'Unknown'}</td>
+                    <td>${d.status ? `<span class="status-pill ${d.status === 'active' ? 'active' : 'gone'}" style="font-size: 0.7em; padding: 2px 8px; margin-right: 6px;">${d.status === 'active' ? 'ACTIVE' : 'GONE'}</span>` : ''}${d.drone_type || 'Unknown'}</td>
                     <td>${((d.confidence || 0) * 100).toFixed(1)}%</td>
                     <td><span class="threat-badge threat-${(d.threat_level || 'low').toLowerCase()}">${d.threat_level || 'LOW'}</span></td>
                     <td>${d.frequency_mhz != null ? d.frequency_mhz + ' MHz' : '?'}</td>
@@ -1173,24 +1248,66 @@
             `).join('');
         }
         
-        function updateConfidenceChart(detections) {
-            if (!confidenceChart) return;
-            
-            const recent = detections.slice(-50);
-            const labels = recent.map((_, i) => i + 1);
-            const confidences = recent.map(d => d.confidence || 0);
-            const thresholds = new Array(recent.length).fill(0.7);
-            
-            confidenceChart.data.labels = labels;
-            confidenceChart.data.datasets[0].data = confidences;
-            confidenceChart.data.datasets[1].data = thresholds;
-            confidenceChart.update();
+        // The confidence chart is a live timeline: one point per sweep,
+        // the strongest active drone's confidence (0 when nothing is there).
+        function updateConfidenceChart(detections) { /* driven by pushConfidencePoint */ }
+
+        function pushConfidencePoint(metrics) {
+            if (!confidenceChart || metrics.current_confidence === undefined) return;
+            const t = metrics.timestamp ? new Date(metrics.timestamp) : new Date();
+            const ds = confidenceChart.data;
+            ds.labels.push(t.toLocaleTimeString());
+            ds.datasets[0].data.push(metrics.current_confidence);
+            ds.datasets[1].data.push(0.7);
+            while (ds.labels.length > 120) {
+                ds.labels.shift(); ds.datasets[0].data.shift(); ds.datasets[1].data.shift();
+            }
+            confidenceChart.update('none');
         }
-        
+
+        function formatAgo(s) {
+            if (s < 60) return `${s}s`;
+            return `${Math.floor(s / 60)}m ${s % 60}s`;
+        }
+
+        let lastTracks = [];
+        function updateTracks(tracks) {
+            lastTracks = tracks || [];
+            const el = document.getElementById('droneStatus');
+            const active = lastTracks.filter(t => t.status === 'active');
+            const gone = lastTracks.filter(t => t.status !== 'active').slice(0, 3);
+            if (!active.length && !gone.length) {
+                el.innerHTML = `<div class="drone-status-row"><span class="status-pill clear">NO DRONES</span>
+                    <div class="drone-status-main"><div class="label">Nothing detected right now</div></div></div>`;
+            } else {
+                const row = t => `
+                    <div class="drone-status-row ${t.status === 'active' ? 'active' : ''}">
+                        <span class="status-pill ${t.status === 'active' ? 'active' : 'gone'}">${t.status === 'active' ? 'DRONE ACTIVE' : 'GONE'}</span>
+                        <div class="drone-status-main">
+                            <div class="label">${t.drone_type}</div>
+                            <div class="meta">
+                                ${t.frequency_mhz} MHz · ${(t.confidence * 100).toFixed(0)}% ·
+                                ${t.status === 'active'
+                                    ? `active for ${formatAgo(t.duration_s)} · last seen ${t.seen_ago_s}s ago`
+                                    : `was active ${formatAgo(t.duration_s)} · gone since ${new Date(t.last_seen).toLocaleTimeString()}`}
+                                ${t.estimated_distance_m ? ` · ~${t.estimated_distance_m} m away (rough, from signal strength)` : ''}
+                                ${t.channels_seen ? ` · channels ${t.channels_seen.map(c => Math.round(c)).join(', ')}` : ''}
+                            </div>
+                        </div>
+                    </div>`;
+                el.innerHTML = (active.length ? '' : `<div class="drone-status-row"><span class="status-pill clear">NO DRONES</span>
+                    <div class="drone-status-main"><div class="label">Nothing active right now</div></div></div>`)
+                    + active.map(row).join('') + gone.map(row).join('');
+            }
+            detectionData = lastTracks;
+            updateDetectionsTable(lastTracks);
+            updateRangeRings(active);
+        }
+
         function updateMetrics(metrics) {
             document.getElementById('totalDetections').innerText = metrics.total_detections || 0;
-            document.getElementById('activeThreats').innerText = metrics.active_threats || 0;
-            document.getElementById('confidence').innerText = `${Math.round((metrics.avg_confidence || 0) * 100)}%`;
+            document.getElementById('activeThreats').innerText = metrics.active_drones || 0;
+            document.getElementById('confidence').innerText = `${Math.round((metrics.current_confidence || 0) * 100)}%`;
             document.getElementById('uptime').innerText = formatUptime(metrics.system_uptime || 0);
         }
         
@@ -1236,11 +1353,7 @@
         
         // WebSocket message handlers
         function addDetection(detection) {
-            detectionData.unshift(detection);
-            if (detectionData.length > 200) detectionData.pop();
-            
-            updateDetectionsTable(detectionData);
-            updateConfidenceChart(detectionData);
+            // The table/status panel are refreshed every sweep by the 'tracks' message.
             
             if (detection.latitude && detection.longitude) {
                 updateDronePosition({
