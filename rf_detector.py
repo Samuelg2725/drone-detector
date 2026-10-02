@@ -690,7 +690,7 @@ def classify_cluster(cluster, band, signatures=()):
     for sig in signatures:
         ch = matches_signature(cluster, sig, band)
         if ch is not None:
-            return f"Calibrated: {sig['name']}", float(sig.get("confidence", 0.85)), "calibrated", sig, ch
+            return "Matches a calibrated hopping pattern", float(sig.get("confidence", 0.85)), "calibrated", sig, ch
 
     cf = cluster["crest_factor_db"]
     edge = cluster["edge_drop_db"]
@@ -905,9 +905,9 @@ def detections_for_band(result, signatures=(), modulation_analyzer=None, duty_tr
         c["classified_as"] = label
         reasons = []
         if method == "calibrated":
-            reasons.append({"text": f"Matches your calibrated signature '{sig['name']}': peak on its channel "
-                                    f"{channel} MHz, and width/crest/edge are inside the ranges it learned",
-                            "effect": f"{_pct(conf)} (signature's own confidence)"})
+            reasons.append({"text": f"Peak on a channel ({channel} MHz) from a calibrated hopping pattern, shape "
+                                    "inside its learned ranges - only used to support a confirmed hopping link",
+                            "effect": None})
         elif label.startswith("Analog"):
             reasons.append({"text": f"Shaped like analog (FM) video: peaked in the middle (crest "
                                     f"{c['crest_factor_db']} dB, needs >= 7), tapering edges (edge drop "

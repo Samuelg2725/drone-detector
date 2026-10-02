@@ -73,10 +73,15 @@ def fuse_band(band, dets, clusters, state, signatures=()):
 
     out = []
     span = None
-    if hop or cal_confirmed:
-        hopping = bool(hop) or bool(cal_confirmed and cal_confirmed[0].get("hopping"))
-        kind = f"Frequency-hopping video link ({band})" if hopping else f"Drone video link ({band})"
-        if hop:
+    # Only the calibration-free hopping detector creates a detection. A
+    # calibrated signature on its own used to be able to as well, but with
+    # just 2 channels and no background check it fired on WiFi channels
+    # 11-13 with no drone present (bursty, ~8% duty) - so now it can only
+    # add a note to a link the hopping detector has already confirmed. And
+    # no drone names in labels: the same kind of link is used by many drones.
+    if hop:
+        kind = f"Frequency-hopping video link ({band})"
+        if True:
             det = rf.cluster_detection(band, hop["cluster"], kind, 0.85, "hopping")
             det["channels_seen"] = hop["channels_mhz"]
             det["reasons"] = [
@@ -87,19 +92,13 @@ def fuse_band(band, dets, clusters, state, signatures=()):
                 {"text": "A WiFi router stays on one channel; jumping between new channels is how this kind of "
                          "drone video link behaves", "effect": "85%"},
             ]
-        else:
-            det = dict(cal_confirmed[1], drone_type=kind)
-            det["reasons"] = list(cal_confirmed[1].get("reasons", []))
         if cal_confirmed:
             sig = cal_confirmed[0]
-            det["drone_type"] = f"{kind} - matches calibrated '{sig['name']}'"
-            det["confidence"] = max(det["confidence"], float(sig.get("confidence", 0.85)))
-            det["signature"] = sig["name"]
-            det["channels_seen"] = sorted(set(det.get("channels_seen", [])) | set(cal_confirmed[1]["channels_seen"]))
-            det.setdefault("reasons", []).append(
-                {"text": f"Also matches your calibrated '{sig['name']}' - seen on {len(cal_confirmed[1]['channels_seen'])} "
-                         f"of its learned channels within {sig.get('window_sweeps', 5)} sweeps",
-                 "effect": f"raised to {det['confidence']:.0%}"})
+            det["confidence"] = 0.9
+            det["reasons"].append(
+                {"text": f"Its channels also match a hopping pattern calibrated earlier (seen on "
+                         f"{len(cal_confirmed[1]['channels_seen'])} of the learned channels) - the same kind of link, "
+                         "which doesn't prove it's the same drone", "effect": "+5%"})
         det["threat_level"] = rf.threat_level(det["confidence"])
         det["track_key"] = f"link:{band}"   # one entry however much it hops
         out.append(det)
