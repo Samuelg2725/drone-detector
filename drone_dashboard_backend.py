@@ -40,6 +40,7 @@ from fastapi.staticfiles import StaticFiles
 
 import localization
 import rf_detector as rf
+import site_baseline
 
 # ======================== Configuration ======================== #
 
@@ -143,6 +144,7 @@ def sensor_public(s, now=None):
         "last_error": s.get("last_error"),
         "reports": s.get("reports", 0),
         "sdr": s.get("sdr"),
+        "baseline": s.get("baseline"),
         "level_offset_db": s.get("level_offset_db", 0.0),
     }
 
@@ -371,6 +373,7 @@ def log_signals(sensor_id, report):
                 "persistence": c.get("persistence"), "video_class": c.get("video_class"),
                 "classified_as": c.get("classified_as"), "wifi_channel_mhz": c.get("wifi_channel_mhz"),
                 "kind": c.get("video_class") or ("Narrowband" if c["bandwidth_mhz"] < 1 else "Signal"),
+                "baseline_pct": c.get("baseline_occupancy_pct"),
             })
         for p in raw.get("packets", []):
             entries.append({
@@ -379,7 +382,7 @@ def log_signals(sensor_id, report):
                 "bandwidth_mhz": round(p["bandwidth_khz"] / 1000, 3), "level_db": p["above_noise_db"],
                 "power_db": None, "crest_factor_db": None, "edge_drop_db": None, "duty_cycle_pct": None,
                 "airtime_pct": None, "persistence": None, "video_class": None, "classified_as": None,
-                "wifi_channel_mhz": None, "kind": f"868 packet ({p['duration_ms']} ms)",
+                "wifi_channel_mhz": None, "kind": f"868 packet ({p['duration_ms']} ms)", "baseline_pct": None,
             })
     signal_log.extend(entries)
     for e in entries:
@@ -435,21 +438,23 @@ def ingest_report(sensor_id, report):
         s["last_report"] = time.time()
         s["reports"] += 1
         s["sweeps"] = report.get("sweep_number", s.get("sweeps", 0))
-        s["sweep_seconds"] = report.get("sweep_seconds")
+        s["sweep_seconds"] = report.get("sweep_seconds") or s.get("sweep_seconds")
         s["learning"] = report.get("learning", False)
         s["last_error"] = report.get("error")
         s["sdr"] = report.get("sdr", s.get("sdr"))
         s["level_offset_db"] = float(report.get("level_offset_db") or 0.0)
+        if report.get("baseline"):
+            s["baseline"] = report["baseline"]
+        if report.get("baseline_profile"):
+            s["baseline_profile"] = report["baseline_profile"]
         if report.get("spectra"):
-            s["bands"] = list(report["spectra"])
-            spectra[sensor_id] = {
-                "sensor_id": sensor_id,
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "scan_number": s["sweeps"],
-                "sweep_seconds": s["sweep_seconds"],
-                "bands": report["spectra"],
-            }
-            broadcast({"type": "spectrum", "data": spectra[sensor_id]})
+            # Sensors now send one band at a time - keep the latest of each.
+            merged = spectra.setdefault(sensor_id, {"sensor_id": sensor_id, "bands": {}})
+            merged["bands"].update(report["spectra"])
+            merged.update(timestamp=time.strftime("%Y-%m-%dT%H:%M:%S"), scan_number=s["sweeps"],
+                          sweep_seconds=s["sweep_seconds"])
+            s["bands"] = sorted(merged["bands"])
+            broadcast({"type": "spectrum", "data": dict(merged, bands=report["spectra"])})
 
         entries = log_signals(sensor_id, report)
         if entries:
@@ -495,29 +500,30 @@ def housekeeping_loop():
 
 def local_sensor_loop(pipeline, sensor_id, lat, lon, args):
     announced = False
+    last_print = 0
+    found_this_cycle = []
     while True:
         try:
-            report = pipeline.sweep()
+            report = pipeline.step()
             report.update({"lat": lat, "lon": lon, "sdr": args.sdr, "level_offset_db": args.level_offset_db})
             ingest_report(sensor_id, report)
+            found_this_cycle += report["detections"]
             if not announced and not report["learning"]:
                 announced = True
                 print("Background learned - hopping detection is now active.")
-            if report["sweep_number"] % 5 == 1:
-                parts = []
-                for band, sp in report["spectra"].items():
-                    top = sp["peaks"][0] if sp["peaks"] else None
-                    parts.append(f"{band}: floor {sp['noise_floor_db']}dB, " +
-                                 (f"strongest +{top['above_noise_db']}dB at {top['frequency_mhz']}MHz"
-                                  if top else "nothing above threshold"))
-                hits = ", ".join(f"{d['drone_type']} @ {d['frequency_mhz']}MHz"
-                                 for d in report["detections"]) or "none"
-                print(f"Sweep #{report['sweep_number']} ({report['sweep_seconds']}s) | "
-                      + " | ".join(parts) + f" | drone-shaped: {hits}")
+            if not pipeline.schedule and report["sweep_number"] - last_print >= 5:
+                last_print = report["sweep_number"]
+                hits = ", ".join(sorted({f"{d['drone_type']} @ {round(d['frequency_mhz'])}MHz"
+                                         for d in found_this_cycle})) or "none"
+                active = [b for b, st_ in pipeline.states.items() if st_.active]
+                print(f"Cycle #{report['sweep_number']} ({report['sweep_seconds']}s for all bands)"
+                      + (f" | extra visits: {', '.join(active)}" if active else "") + f" | drone-shaped: {hits}")
+            if not pipeline.schedule:
+                found_this_cycle = []
         except Exception as e:
             print(f"Scan error: {e}")
             ingest_report(sensor_id, {"lat": lat, "lon": lon, "error": str(e)})
-        time.sleep(0.2)
+            time.sleep(0.5)
 
 
 # ======================== REST API (FastAPI) ======================== #
@@ -591,6 +597,13 @@ def api_video_clear():
     return {"success": True}
 
 
+@app.get("/api/baseline")
+def api_baseline():
+    with lock:
+        return {"success": True, "data": {sid: {"status": s_.get("baseline"), "profile": s_.get("baseline_profile")}
+                                          for sid, s_ in sensors.items()}}
+
+
 @app.get("/api/tracks")
 def api_tracks():
     with lock:
@@ -661,6 +674,7 @@ def parse_args():
     ap.add_argument("--bands", nargs="+", choices=list(rf.BAND_ARGS), default=rf.DEFAULT_BAND_ARGS,
                     help="bands to sweep: 868 2.4 5.2 5.8 (default) or 5.8wide (5.645-5.925GHz)")
     rf.add_sdr_args(ap)
+    site_baseline.add_args(ap)
     ap.add_argument("--learn-sweeps", type=int, default=20,
                     help="sweeps spent learning the background at startup, drones off (default 20, ~25s)")
     ap.add_argument("--port", type=int, default=8000)
@@ -686,7 +700,10 @@ if __name__ == "__main__":
         bands = rf.bands_from_args(args.bands)
         print(f"Connecting to {args.sdr}...")
         receiver = rf.receiver_from_args(args)
-        pipeline = DetectorPipeline(receiver, bands, signatures, args.learn_sweeps, analyzer)
+        baseline, minutes = site_baseline.from_args(args, args.sensor_id, bands)
+        pipeline = DetectorPipeline(receiver, bands, signatures, args.learn_sweeps, analyzer,
+                                    band_reps=rf.band_reps_from_args(args), baseline=baseline,
+                                    baseline_minutes=minutes)
         lat = args.lat if args.lat is not None else saved_locations.get(args.sensor_id, {}).get("lat")
         lon = args.lon if args.lon is not None else saved_locations.get(args.sensor_id, {}).get("lon")
         threading.Thread(target=local_sensor_loop, args=(pipeline, args.sensor_id, lat, lon, args),
@@ -696,8 +713,9 @@ if __name__ == "__main__":
             print(f"Sweeping {b}: {lo / 1e6:.0f}-{hi / 1e6:.0f}MHz in {len(rf.plan_hops(lo, hi))} hops")
         if signatures:
             print(f"Loaded {len(signatures)} calibrated signature(s): " + ", ".join(s_["name"] for s_ in signatures))
-        print(f"Learning the background for the first {args.learn_sweeps} sweeps - keep drones switched OFF "
-              f"until it says 'Background learned'.")
+        if pipeline.learning and not minutes:
+            print(f"Learning the background for the first {args.learn_sweeps} sweeps - keep drones switched OFF "
+                  f"until it says 'Background learned'.")
     else:
         print("No local SDR - waiting for sensor_node.py reports.")
 

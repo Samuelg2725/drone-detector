@@ -67,3 +67,5 @@ __pycache__/
 *.db-shm
 calibration/
 sensors.json
+site_baseline.json
+sdr_timing.json

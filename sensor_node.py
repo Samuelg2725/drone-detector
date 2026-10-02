@@ -25,6 +25,7 @@ import urllib.error
 import urllib.request
 
 import rf_detector as rf
+import site_baseline
 from detector_pipeline import DetectorPipeline
 
 
@@ -44,6 +45,7 @@ def main():
     ap.add_argument("--bands", nargs="+", choices=list(rf.BAND_ARGS), default=rf.DEFAULT_BAND_ARGS,
                     help="bands to sweep: 868 2.4 5.2 5.8 (default) or 5.8wide (5.645-5.925GHz)")
     rf.add_sdr_args(ap)
+    site_baseline.add_args(ap)
     ap.add_argument("--learn-sweeps", type=int, default=20,
                     help="sweeps spent learning the background at startup, drones off (default 20)")
     args = ap.parse_args()
@@ -52,17 +54,20 @@ def main():
     bands = rf.bands_from_args(args.bands)
     print(f"[{args.id}] Connecting to {args.sdr}...")
     receiver = rf.receiver_from_args(args)
-    pipeline = DetectorPipeline(receiver, bands, rf.load_signatures(), args.learn_sweeps)
+    baseline, minutes = site_baseline.from_args(args, args.id, bands)
+    pipeline = DetectorPipeline(receiver, bands, rf.load_signatures(), args.learn_sweeps,
+                                band_reps=rf.band_reps_from_args(args), baseline=baseline, baseline_minutes=minutes)
     print(f"[{args.id}] Reporting to {url}. Learning background for {args.learn_sweeps} sweeps - keep drones OFF.")
 
     failures = 0
     try:
         while True:
             try:
-                report = pipeline.sweep()
+                report = pipeline.step()        # one band - sent as soon as it's done
             except Exception as e:
                 print(f"[{args.id}] Scan error: {e}")
                 report = {"error": str(e)}
+                time.sleep(0.5)
             report.update({"lat": args.lat, "lon": args.lon, "sdr": args.sdr,
                            "level_offset_db": args.level_offset_db})
             try:
@@ -78,7 +83,6 @@ def main():
                 print(f"[{args.id}] " + ", ".join(
                     f"{d['drone_type']} @ {d['frequency_mhz']}MHz +{d['above_noise_db']}dB"
                     for d in report["detections"]))
-            time.sleep(0.2)
     except KeyboardInterrupt:
         pass
     finally:

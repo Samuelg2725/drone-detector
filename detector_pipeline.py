@@ -38,6 +38,7 @@ class BandState:
         self.learn_sweeps = learn_sweeps
         self.control = control_link.ControlLinkDetector()
         self.duty = rf.DutyTracker()
+        self.active = False
         self.link_span = None        # (lo_mhz, hi_mhz) of the last hopping link
         self.link_span_ttl = 0       # sweeps left before that span is forgotten
 
@@ -127,55 +128,262 @@ def fuse_band(band, dets, clusters, state, signatures=()):
     return out
 
 
+# A control link and a video link count as "together" if seen by this
+# sensor within this many seconds (bands are now visited one at a time).
+CORRELATION_WINDOW_S = 5.0
+# Adaptive priority: a band with something suspicious going on gets this
+# many extra visits per cycle until it goes quiet - faster updates and
+# better duty/hop measurements exactly where a drone might be.
+ACTIVE_EXTRA_VISITS = 1
+
+
+# ---- Dual-band correlation (Chris's F7 + F9) ----
+# Many drone links use 2.4GHz and 5.xGHz at the same time. Each visit to a
+# video band records its NEW activity: strong, wide signals that aren't
+# where things normally are (learned background / site baseline). Then:
+#   F7  co-appearance: of the recent cycles where either band had new
+#       activity, in what fraction did BOTH?
+#   F9  shared trend: when both are present, do their levels rise and
+#       fall together (one moving transmitter)?
+DUAL_PAIR_WINDOW_S = 3.0        # a 2.4 and a 5.x visit this close count as the same cycle
+DUAL_HISTORY = 20               # recent cycles compared
+DUAL_MIN_CYCLES = 6             # need this many cycles with activity before judging
+F7_STEPS = [(0.95, 0.15), (0.80, 0.10), (0.60, 0.05)]
+F9_STEPS = [(0.80, 0.10), (0.60, 0.07), (0.40, 0.03)]
+DUAL_ONLY_MIN_F7 = 0.80         # F7 alone strong enough to report "dual-band activity"
+DUAL_ONLY_CONF = 0.60           # ...but only ever medium: a new dual-band WiFi device could do it too
+
+
+def new_activity_level(band, clusters, state, baseline):
+    """Strongest NEW wide signal this visit (dB above noise), or None."""
+    best = None
+    for c in rf.wide_strong(clusters):
+        if state.background.is_background(c["peak_mhz"]):
+            continue
+        bo = c.get("baseline_occupancy_pct")
+        if bo is not None and bo > rf.BASELINE_COMMON_PCT:
+            continue
+        best = c["above_noise_db"] if best is None else max(best, c["above_noise_db"])
+    return best
+
+
+def dual_band_evidence(history, cycle_s=None):
+    """history: band -> deque[(t, level or None)]. Returns a dict with F7/F9
+    values and bonuses, or None if there isn't enough to judge."""
+    low = [b for b in history if b.startswith("2.4")]
+    highs = [b for b in history if rf.is_5ghz(b)]
+    if not low or not highs:
+        return None
+    # Same cycle = within one cycle's time of each other (at least 3s), so a
+    # slower sensor (e.g. a Pi, or many bands) still pairs its visits.
+    window = max(DUAL_PAIR_WINDOW_S, 1.2 * (cycle_s or 0))
+    best = None
+    for hb in highs:
+        pairs = []
+        for t, lv in list(history[low[0]])[-DUAL_HISTORY:]:
+            near = [(abs(t2 - t), lv2) for t2, lv2 in history[hb] if abs(t2 - t) <= window]
+            if near:
+                pairs.append((lv, min(near)[1]))
+        either = [p for p in pairs if p[0] is not None or p[1] is not None]
+        both = [p for p in pairs if p[0] is not None and p[1] is not None]
+        if len(either) < DUAL_MIN_CYCLES:
+            continue
+        f7 = len(both) / len(either)
+        r = None
+        if len(both) >= 5:
+            a, b = np.array([p[0] for p in both]), np.array([p[1] for p in both])
+            if a.std() > 1.0 and b.std() > 1.0:          # levels must actually move to compare trends
+                r = float(np.corrcoef(a, b)[0, 1])
+        ev = {"band": hb, "f7": round(f7, 2), "cycles": len(either), "both": len(both),
+              "f9": None if r is None else round(r, 2),
+              "f7_bonus": next((bon for thr, bon in F7_STEPS if f7 >= thr), 0.0),
+              "f9_bonus": next((bon for thr, bon in F9_STEPS if r is not None and r > thr), 0.0)}
+        if best is None or ev["f7"] > best["f7"]:
+            best = ev
+    return best
+
+
+def dual_band_reasons(ev, low_band="2.4GHz"):
+    out = [{"text": f"New activity on both {low_band} and {ev['band']} in {ev['f7']:.0%} of the {ev['cycles']} recent "
+                    f"cycles where either had any (F7 - many drone links use both bands at once)",
+            "effect": f"+{ev['f7_bonus']:.0%}" if ev["f7_bonus"] else "no change"}]
+    if ev["f9"] is not None:
+        out.append({"text": f"Their signal levels move together (correlation {ev['f9']:+.2f}, F9 - like one moving "
+                            "transmitter)", "effect": f"+{ev['f9_bonus']:.0%}" if ev["f9_bonus"] else "no change"})
+    return out
+
+
 class DetectorPipeline:
-    def __init__(self, receiver, bands, signatures=(), learn_sweeps=20, analyzer=None):
+    def __init__(self, receiver, bands, signatures=(), learn_sweeps=20, analyzer=None, band_reps=None,
+                 baseline=None, baseline_minutes=0):
         self.receiver = receiver
         self.bands = list(bands)
         self.signatures = list(signatures)
         self.analyzer = analyzer
         self.states = {b: BandState(learn_sweeps) for b in self.bands}
-        self.sweeps = 0
+        self.band_reps = dict(band_reps or {})
+        self.sweeps = 0                 # completed cycles over all bands
+        self.schedule = []
+        self.cycle_start = time.time()
+        self.last_cycle_seconds = None
+        self.recent = {}                # band -> (time, detections) for cross-band correlation
+        from collections import deque
+        self.dual = {b: deque(maxlen=DUAL_HISTORY * 3) for b in self.bands
+                     if b.startswith("2.4") or rf.is_5ghz(b)}
+        # Site baseline: record one now, or use a saved one.
+        self.baseline = baseline
+        self.just_recorded = False
+        self.baseline_minutes = baseline_minutes
+        self.recording_until = time.time() + baseline_minutes * 60 if baseline is not None and baseline_minutes else None
+        if baseline is not None and self.recording_until is None and baseline.profile:
+            self._use_baseline()
+
+    def _use_baseline(self):
+        """A saved baseline replaces the startup background learning."""
+        for band, st in self.states.items():
+            if self.baseline.seed_background(band, st.background) or band == control_link.CONTROL_BAND:
+                st.background.sweeps = max(st.background.sweeps, st.learn_sweeps)
+
+    @property
+    def recording_baseline(self):
+        return self.recording_until is not None
+
+    def baseline_status(self):
+        if self.baseline is None:
+            return {"state": "off"}
+        if self.recording_baseline:
+            total = self.baseline_minutes * 60
+            left = max(0.0, self.recording_until - time.time())
+            return {"state": "recording", "progress_pct": round(100 * (1 - left / total), 1), "seconds_left": int(left)}
+        if self.baseline.profile:
+            return {"state": "loaded", "recorded_at": self.baseline.recorded_at}
+        return {"state": "none"}
 
     @property
     def learning(self):
-        return any(st.learning for st in self.states.values())
+        return self.recording_baseline or any(st.learning for st in self.states.values())
 
-    def sweep(self):
-        """One pass over every band. Returns a report dict:
-        {"spectra": {band: summary}, "detections": [...], "sweep_seconds": s, "learning": bool}"""
+    def _build_schedule(self):
+        """One cycle's visit order. Bands with extra visits (manual
+        --band-reps, or recent suspicious activity) are interleaved rather
+        than visited back to back, so their updates are evenly spaced."""
+        reps = {b: max(1, int(self.band_reps.get(b, 1))) + (ACTIVE_EXTRA_VISITS if self.states[b].active else 0)
+                for b in self.bands}
+        order = []
+        for r in range(max(reps.values())):
+            order += [b for b in self.bands if reps[b] > r]
+        return order
+
+    def step(self):
+        """Visit ONE band and return its report straight away (so the
+        dashboard updates band by band, not once per full cycle)."""
+        if not self.schedule:
+            if self.sweeps or self.last_cycle_seconds is not None:
+                self.last_cycle_seconds = round(time.time() - self.cycle_start, 2)
+            self.cycle_start = time.time()
+            self.schedule = self._build_schedule()
+        band = self.schedule.pop(0)
+        if not self.schedule:
+            self.sweeps += 1
+
         t0 = time.time()
-        spectra, found = {}, []
-        for band in self.bands:
-            st = self.states[band]
-            if band == control_link.CONTROL_BAND:
-                spectra[band], det = self.control_band(band, st)
-                if det:
-                    found.append(det)
-                continue
+        st = self.states[band]
+        if band == control_link.CONTROL_BAND:
+            summary, det = self.control_band(band, st)
+            found = [det] if det else []
+        else:
             result = rf.sweep_band(self.receiver, band)
-            spectra[band] = rf.spectrum_summary(result)
-            dets, clusters = rf.detections_for_band(result, self.signatures, self.analyzer, st.duty)
-            spectra[band]["raw"] = rf.raw_view(result, clusters)
-            found.extend(fuse_band(band, dets, clusters, st, self.signatures))
-            spectra[band]["background"] = {
+            summary = rf.spectrum_summary(result)
+            dets, clusters = rf.detections_for_band(result, self.signatures, self.analyzer, st.duty,
+                                                    None if self.recording_baseline else self.baseline)
+            if self.recording_baseline:
+                self.baseline.add(band, result, clusters)
+                dets = []
+            summary["raw"] = rf.raw_view(result, clusters)
+            found = fuse_band(band, dets, clusters, st, self.signatures)
+            if band in self.dual and not self.recording_baseline and not st.learning:
+                self.dual[band].append((time.time(), new_activity_level(band, clusters, st, self.baseline)))
+                found = self.apply_dual_band(band, found, clusters)
+            summary["background"] = {
                 "learning": st.learning,
                 "sweeps": min(st.background.sweeps, st.learn_sweeps),
                 "learn_sweeps": st.learn_sweeps,
                 "busy_channels_mhz": st.background.busy_channels_mhz(),
             }
-        correlate(found)
+            st.active = bool(found) or sum(bool(x) for x in st.hop.window) >= 2
+        if band == control_link.CONTROL_BAND:
+            st.active = bool(found) or sum(bool(x) for x in st.control.window) >= 3
+
+        if self.recording_baseline:
+            found = []
+            if time.time() >= self.recording_until:
+                self.baseline.finish(self.baseline_minutes)
+                self.recording_until = None
+                self.just_recorded = True
+                self._use_baseline()
+                print(f"Site baseline recorded ({self.baseline_minutes} min) and saved - detection is now active.")
+        now = time.time()
+        self.recent[band] = (now, [dict(d) for d in found])
+        others = [d for b, (t, ds) in self.recent.items() if b != band and now - t <= CORRELATION_WINDOW_S for d in ds]
+        correlate(found, others)
         for det in found:
             sig = next((x for x in self.signatures if x["name"] == det.get("signature")), None)
             det["estimated_distance_m"] = rf.estimate_distance_m(det["above_noise_db"], sig)
-        self.sweeps += 1
+        summary["visited_s"] = round(now - t0, 3)
+        self.steps = getattr(self, "steps", 0) + 1
+        profile = None
+        if self.baseline is not None and self.baseline.profile and (self.steps % 60 == 1 or self.just_recorded):
+            profile = self.baseline.public()       # the full emitter list now and then, not every step
+            self.just_recorded = False
         return {
-            "timestamp": time.time(),
+            "baseline_profile": profile,
+            "timestamp": now,
+            "band": band,
             "sweep_number": self.sweeps,
-            "sweep_seconds": round(time.time() - t0, 2),
+            "step_seconds": round(now - t0, 3),
+            "sweep_seconds": self.last_cycle_seconds,
             "learning": self.learning,
-            "spectra": spectra,
+            "baseline": self.baseline_status(),
+            "spectra": {band: summary},
             "detections": found,
         }
+
+    def apply_dual_band(self, band, found, clusters):
+        ev = dual_band_evidence(self.dual, self.last_cycle_seconds)
+        if not ev:
+            return found
+        bonus = ev["f7_bonus"] + ev["f9_bonus"]
+        for d in found:
+            if d["method"] in VIDEO_METHODS and bonus > 0:
+                d["confidence"] = round(min(0.95, d["confidence"] + bonus), 3)
+                d["threat_level"] = rf.threat_level(d["confidence"])
+                d.setdefault("reasons", []).extend(dual_band_reasons(ev))
+        has_video = any(d["method"] in VIDEO_METHODS for d in found)
+        level = self.dual[band][-1][1]
+        if not has_video and level is not None and ev["f7"] >= DUAL_ONLY_MIN_F7:
+            strongest = max(rf.wide_strong(clusters), key=lambda c: c["above_noise_db"])
+            det = rf.cluster_detection(band, strongest, "Dual-band link activity (2.4 + 5 GHz)",
+                                       round(min(0.75, DUAL_ONLY_CONF + ev["f9_bonus"]), 3), "dual-band")
+            det["reasons"] = dual_band_reasons(ev) + [{
+                "text": "Neither band alone matched a drone rule; reported because new signals keep appearing on "
+                        "both bands together. A new dual-band WiFi device could also do this, so it stays medium",
+                "effect": f"{det['confidence']:.0%}"}]
+            det["track_key"] = "dual-band"
+            det["band"] = "2.4+5GHz"          # one entry whichever band reported it
+            found.append(det)
+        return found
+
+    def sweep(self):
+        """One full cycle over every band, merged into one report (used by
+        tools that want everything at once)."""
+        merged = {"spectra": {}, "detections": []}
+        while True:
+            r = self.step()
+            merged["spectra"].update(r["spectra"])
+            merged["detections"] += r["detections"]
+            merged.update({k: r[k] for k in ("timestamp", "sweep_number", "sweep_seconds", "learning")})
+            if not self.schedule:
+                return merged
 
     def control_band(self, band, st):
         """868MHz: one long capture -> display spectrum + packet analysis."""
@@ -187,6 +395,8 @@ class DetectorPipeline:
         summary = rf.spectrum_summary(result)
         packets = control_link.find_packets(samples, center)
         summary["raw"] = rf.raw_view(result, [], {"packets": packets[:60]})
+        if self.recording_baseline:
+            self.baseline.add(band, result, [])
         link = st.control.update(packets)
         st.background.sweeps += 1          # 868MHz learning period just counts sweeps
         summary["background"] = {"learning": st.learning, "sweeps": min(st.background.sweeps, st.learn_sweeps),
@@ -231,24 +441,27 @@ class DetectorPipeline:
 VIDEO_METHODS = {"hopping", "calibrated", "shape"}
 
 
-def correlate(found):
-    """A control link and a video link at the same time from the same
-    sensor is the strongest sign of an FPV drone (the boss's 'activity
-    correlates with 2.4/5.8GHz' row): mark both and raise confidence."""
-    control = [d for d in found if d["method"] == "control-link"]
-    video = [d for d in found if d["method"] in VIDEO_METHODS and d["confidence"] >= 0.6]
-    if not control or not video:
+def correlate(found, others=()):
+    """A control link and a video link at (nearly) the same time from the
+    same sensor is the strongest sign of an FPV drone (the boss's
+    'activity correlates with 2.4/5.8GHz' row): mark this step's
+    detections and raise confidence. `others` = recent detections from the
+    sensor's other bands."""
+    pool = list(found) + list(others)
+    has_control = any(d["method"] == "control-link" for d in pool)
+    has_video = any(d["method"] in VIDEO_METHODS and d["confidence"] >= 0.6 for d in pool)
+    if not (has_control and has_video):
         return
-    for d in control + video:
+    for d in found:
+        if d["method"] == "control-link":
+            d["drone_type"] += " + video link active: likely FPV drone"
+        elif d["method"] in VIDEO_METHODS and d["confidence"] >= 0.6:
+            d["drone_type"] += " + control link active"
+        else:
+            continue
         d["correlated"] = True
         d["confidence"] = max(d["confidence"], 0.92)
         d["threat_level"] = rf.threat_level(d["confidence"])
-    for d in control:
-        d["drone_type"] += " + video link active: likely FPV drone"
-    for d in video:
-        d["drone_type"] += " + control link active"
-    for d in control + video:
         d.setdefault("reasons", []).append(
-            {"text": "An 868 MHz control link and a video link are active at the same time at this sensor - "
-                     "the strongest sign of an FPV drone", "effect": "raised to 92%"})
-
+            {"text": f"An 868 MHz control link and a video link are active within {CORRELATION_WINDOW_S:.0f} s of "
+                     "each other at this sensor - the strongest sign of an FPV drone", "effect": "raised to 92%"})

@@ -752,6 +752,15 @@
                     <div class="card-content">
                         <div id="rawSummary" style="font-size: 0.9em; color: #ccc; margin-bottom: 10px;">Waiting for data...</div>
                         <div style="font-size: 0.85em; color: #aaa; margin-bottom: 6px;">
+                            <b>Spectrum</b> - <span style="color:#4facfe">latest power</span>,
+                            <span style="color:#ffd54f">peak hold</span> (highest level in the last 20 looks - shows short bursts and hops),
+                            <span style="color:#999">noise floor</span>. Same frequency axis as the waterfall below. Hover for values.
+                        </div>
+                        <div style="position: relative;">
+                            <canvas id="rawSpectrum" width="1024" height="200" style="width: 100%; height: 200px; background: #05050f; border-radius: 6px 6px 0 0;"></canvas>
+                            <div id="rawHover" style="position: absolute; top: 6px; right: 10px; font-size: 0.8em; color: #fff; background: rgba(0,0,0,0.6); padding: 2px 6px; border-radius: 4px; display: none;"></div>
+                        </div>
+                        <div style="font-size: 0.85em; color: #aaa; margin: 6px 0;">
                             <b>Waterfall</b> - newest sweep at the top, one row per sweep. Brighter = stronger above that hop's noise floor
                             (dark blue = noise, yellow/red = +30-40 dB). A hopping drone link shows as bright dashes jumping around.
                         </div>
@@ -783,12 +792,28 @@
                         </div>
                         <div class="detections-table" style="max-height: 480px; overflow: auto;"><table>
                             <thead><tr><th>Time</th><th>Sensor</th><th>Band</th><th>Frequency</th><th>Width</th><th>Level</th>
-                                <th>Duty</th><th>Airtime</th><th>Type</th><th>WiFi ch</th></tr></thead>
-                            <tbody id="logBody"><tr><td colspan="10">Waiting for data...</td></tr></tbody></table></div>
+                                <th>Duty</th><th>Airtime</th><th>Baseline</th><th>Type</th><th>WiFi ch</th></tr></thead>
+                            <tbody id="logBody"><tr><td colspan="11">Waiting for data...</td></tr></tbody></table></div>
                         <div style="text-align: center; margin-top: 8px;"><button class="raw-btn" onclick="logShowMore()">Show more</button></div>
                         <div style="font-size: 0.8em; color: #888; margin-top: 6px;">Level = dB above that sensor's own noise floor
                             (not calibrated dBm). Duty = % of sweeps in the last 30 s this frequency was busy. Airtime = % of the 6.5 ms
-                            capture it was actually transmitting. Most rows are ordinary WiFi/Bluetooth - this is everything the detectors look at.</div>
+                            capture it was actually transmitting. Baseline = how busy this frequency normally is at this site (blank = no baseline recorded).
+                            Most rows are ordinary WiFi/Bluetooth - this is everything the detectors look at.</div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-bottom: 20px;">
+                    <div class="card-header"><h3><i class="fas fa-map"></i> Site baseline - what's normal here</h3>
+                        <span id="baselineState" style="font-size: 0.85em; color: #888;"></span></div>
+                    <div class="card-content">
+                        <div style="font-size: 0.85em; color: #aaa; margin-bottom: 8px;">Recorded with no drones flying
+                            (<code>--baseline-minutes 10</code>). Signals on frequencies that are normally busy are marked down as known
+                            emitters; signals on normally quiet frequencies are marked as new. Below: the persistent (busy &ge;80% of the time)
+                            and periodic emitters it found.</div>
+                        <div class="detections-table" style="max-height: 320px; overflow: auto;"><table>
+                            <thead><tr><th>Band</th><th>MHz</th><th>Busy</th><th>Avg level</th><th>Variance</th><th>Typical burst</th>
+                                <th>Changes/min</th><th>Typical width</th><th>Pattern</th></tr></thead>
+                            <tbody id="baselineBody"><tr><td colspan="9">No baseline yet</td></tr></tbody></table></div>
                     </div>
                 </div>
 
@@ -900,6 +925,15 @@
                         </tbody></table>
                         <p>Below 50% nothing is reported (it stays visible in the Raw Data log). 50-60% = low, 60-80% = medium, above 80% = high.
                         Every detection has a <b>"Why it says this"</b> list showing exactly which of these applied.</p>
+
+                        <h4>Site baseline and dual-band correlation</h4>
+                        <p><b>Site baseline</b> (optional, recommended): 5-15 minutes recorded with no drones, saved per sensor. Signals on
+                        frequencies busy &ge;80% of that time are a known fixed emitter (confidence x0.3), 20-80% common here (x0.7), &le;2%
+                        new (+5%). It also replaces the startup learning.</p>
+                        <p><b>Dual-band</b> (Chris's F7/F9): new activity appearing on 2.4 GHz and 5 GHz in the same cycles (&ge;60/80/95% of
+                        them: +5/10/15%) and their levels moving together (correlation &gt;0.4/0.6/0.8: +3/7/10%). If neither band matches a rule
+                        on its own but F7 &ge;80%, it reports "Dual-band link activity" - at most medium, because a new dual-band WiFi device
+                        could do the same.</p>
 
                         <h4>3. Duty cycle and airtime</h4>
                         <p><b>Duty cycle</b>: in what % of sweeps over the last 30 s was this frequency busy (measured on the middle half of the signal,
@@ -1306,6 +1340,7 @@
             if (page === 'raw') {
                 renderRaw(true);
                 renderSignalLog();
+                renderBaseline();
             }
             if (page === 'video') {
                 renderVideo();
@@ -1524,6 +1559,27 @@
             return rows;
         }
 
+        async function renderBaseline() {
+            try {
+                const d = (await (await fetch(`${API_URL}/baseline`)).json()).data || {};
+                const sid = rawSensor || Object.keys(d)[0];
+                const b = d[sid] || {};
+                const st = b.status || {};
+                document.getElementById('baselineState').innerText =
+                    st.state === 'recording' ? `${sid}: recording... ${st.progress_pct}% (${st.seconds_left}s left) - no drones please`
+                    : st.state === 'loaded' ? `${sid}: recorded ${new Date(st.recorded_at).toLocaleString()}`
+                    : `${sid || ''}: no baseline recorded`;
+                const em = (b.profile && b.profile.emitters) || [];
+                document.getElementById('baselineBody').innerHTML = em.length ? em.map(x => `
+                    <tr><td>${x.band}</td><td>${x.mhz}</td><td>${Math.round(x.occupancy_pct)}%</td><td>${x.avg_db} dB</td>
+                        <td>±${x.var_db} dB</td><td>${x.mean_burst_s}s</td><td>${x.changes_per_min}</td>
+                        <td>${x.avg_bw_mhz ? x.avg_bw_mhz + ' MHz' : '-'}</td>
+                        <td>${x.persistent ? 'persistent' : ''}${x.periodic_s ? `every ~${x.periodic_s}s` : ''}</td></tr>`).join('')
+                    : `<tr><td colspan="9">${st.state === 'loaded' ? 'No persistent or periodic emitters found' : 'No baseline yet'}</td></tr>`;
+            } catch (e) { console.error('baseline', e); }
+        }
+        setInterval(() => { if (document.getElementById('rawPage').style.display !== 'none') renderBaseline(); }, 5000);
+
         function renderSignalLog() {
             fillSelect('logSensor', new Set(signalLog.map(e => e.sensor_id)));
             fillSelect('logBand', new Set(signalLog.map(e => e.band)));
@@ -1533,10 +1589,11 @@
                 <tr><td>${new Date(e.timestamp).toLocaleTimeString()}</td><td>${e.sensor_id}</td><td>${e.band}</td>
                     <td>${e.frequency_mhz} MHz</td><td>${e.bandwidth_mhz} MHz</td><td>+${e.level_db} dB</td>
                     <td>${pct(e.duty_cycle_pct)}</td><td>${pct(e.airtime_pct)}</td>
+                    <td title="how busy this frequency normally is (site baseline)">${pct(e.baseline_pct)}</td>
                     <td>${e.kind}${e.persistence && e.persistence !== 'collecting' ? ' ' + persistencePill(e.persistence) : ''}
                         ${e.classified_as ? `<br><span style="color:#ffb74d;font-size:0.85em">${e.classified_as}</span>` : ''}</td>
                     <td>${e.wifi_channel_mhz ?? '-'}</td></tr>`).join('')
-                : '<tr><td colspan="10">No signals match these filters</td></tr>';
+                : '<tr><td colspan="11">No signals match these filters</td></tr>';
         }
 
         async function clearVideo() {
@@ -1635,6 +1692,53 @@
             return stops[i].map((c, k) => Math.round(c + (stops[i + 1][k] - c) * f));
         }
 
+        const PEAK_HOLD_ROWS = 20;
+        let rawSpectrumView = null;    // what's drawn, for the hover readout
+
+        function drawRawSpectrum(rows, band) {
+            const cv = document.getElementById('rawSpectrum');
+            const ctx = cv.getContext('2d');
+            const W = cv.width, H = cv.height;
+            ctx.fillStyle = '#05050f'; ctx.fillRect(0, 0, W, H);
+            if (!rows.length) return;
+            const cur = rows[0], n = cur.power.length;
+            const peak = cur.power.slice();
+            rows.slice(0, PEAK_HOLD_ROWS).forEach(r => r.power.forEach((v, i) => { if (v > peak[i]) peak[i] = v; }));
+            const lo = Math.floor((Math.min(...cur.noise) - 8) / 10) * 10;
+            const hi = Math.ceil((Math.max(...peak) + 5) / 10) * 10;
+            const y = v => H - (v - lo) / (hi - lo) * H;
+            const x = i => i / (n - 1) * W;
+            ctx.font = '12px sans-serif'; ctx.fillStyle = '#777'; ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+            for (let v = lo; v <= hi; v += 10) {
+                ctx.beginPath(); ctx.moveTo(0, y(v)); ctx.lineTo(W, y(v)); ctx.stroke();
+                ctx.fillText(`${v} dB`, 4, y(v) - 2);
+            }
+            const line = (arr, colour, dash, width) => {
+                ctx.beginPath(); ctx.setLineDash(dash); ctx.strokeStyle = colour; ctx.lineWidth = width;
+                arr.forEach((v, i) => i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v)));
+                ctx.stroke(); ctx.setLineDash([]);
+            };
+            line(cur.noise, '#999', [5, 4], 1);
+            line(peak, '#ffd54f', [], 1);
+            line(cur.power, '#4facfe', [], 1.5);
+            rawSpectrumView = {band, power: cur.power, peak, noise: cur.noise, freqs: band.freqs_mhz};
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const cv = document.getElementById('rawSpectrum'), tip = document.getElementById('rawHover');
+            cv.addEventListener('mousemove', e => {
+                if (!rawSpectrumView) return;
+                const r = cv.getBoundingClientRect();
+                const i = Math.max(0, Math.min(rawSpectrumView.power.length - 1,
+                    Math.round((e.clientX - r.left) / r.width * (rawSpectrumView.power.length - 1))));
+                const f = rawSpectrumView.freqs ? rawSpectrumView.freqs[i] : null;
+                tip.style.display = 'block';
+                tip.innerText = `${f ? f.toFixed(2) + ' MHz · ' : ''}now ${rawSpectrumView.power[i]} dB · peak ${rawSpectrumView.peak[i]} dB · ` +
+                    `floor ${rawSpectrumView.noise[i]} dB (+${(rawSpectrumView.power[i] - rawSpectrumView.noise[i]).toFixed(1)} dB)`;
+            });
+            cv.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+        });
+
         function drawWaterfall(rows) {
             const cv = document.getElementById('waterfall');
             const ctx = cv.getContext('2d');
@@ -1703,6 +1807,7 @@
                 (band.background && band.background.learning ? ` · <span style="color:#ffb74d">learning background ${band.background.sweeps}/${band.background.learn_sweeps}</span>` : '');
 
             drawWaterfall(rawHistory[rawSensor + '|' + rawBand] || []);
+            drawRawSpectrum(rawHistory[rawSensor + '|' + rawBand] || [], band);
             const r = band.range_mhz;
             document.getElementById('waterfallAxis').innerHTML = [0, 0.25, 0.5, 0.75, 1].map(f =>
                 `<span>${(r[0] + (r[1] - r[0]) * f).toFixed(1)} MHz</span>`).join('');
@@ -1747,8 +1852,11 @@
 
         function updateSpectrum(spec) {
             const sid = spec.sensor_id || 'local';
-            spectraBySensor[sid] = spec;
+            // Sensors send one band at a time now - merge into what we have.
             rawRecord(sid, spec);
+            const prev = spectraBySensor[sid];
+            spec = prev ? {...spec, bands: {...prev.bands, ...spec.bands}} : spec;
+            spectraBySensor[sid] = spec;
             if (!selectedSpectrumSensor) selectedSpectrumSensor = sid;
             if (sid !== selectedSpectrumSensor) return;
             lastSpectrumAt = Date.now();

@@ -120,6 +120,37 @@ LoRaWAN on 8 channels every 2s, a constant carrier): decoys gave no
 detections, the link was flagged from the 5th sweep. **It has not yet seen a
 real ExpressLRS/Crossfire link** - test it with a real one before relying on it.
 
+## Speed, priority and the site baseline
+
+**Measure your SDR's retune time once** (stop the dashboard first; needs an
+FM radio station - they're everywhere):
+```
+python3 measure_retune.py              # HackRF
+python3 measure_retune.py --sdr pluto  # Pluto
+```
+It saves `sdr_timing.json`; every program then waits exactly as long as
+your SDR needs after each retune instead of the cautious 26ms default.
+
+- Each band is sent to the dashboard as soon as it is swept.
+- A band with suspicious activity automatically gets an extra visit per
+  cycle until it goes quiet. Fixed priority: `--band-reps 2.4=2`.
+- `--samples 65536` halves the listening time per slice (~2x faster,
+  slightly rougher noise floor; default 131072).
+
+**Site baseline** - record once per sensor, with no drones flying:
+```
+python3 drone_dashboard_backend.py --baseline-minutes 10
+python3 sensor_node.py --id north-wall ... --baseline-minutes 10
+```
+Saved to `site_baseline.json` and loaded automatically next time (no 25s
+learning). Per MHz it keeps average/peak level, variance, occupancy, burst
+length, on/off changes, typical width, persistent and periodic emitters.
+Signals on normally-busy frequencies are marked down (x0.3 at >=80%,
+x0.7 at 20-80%), on normally-quiet ones marked new (+5%). Re-record when
+the site's equipment changes. `--no-baseline` ignores it.
+
+**Dual-band correlation** (Chris's F7/F9) runs automatically on 2.4 + 5GHz.
+
 ## 3. Where to put sensors
 
 Measured with `simulate_sensors.py --offline` (200m site, 4dB level wobble,

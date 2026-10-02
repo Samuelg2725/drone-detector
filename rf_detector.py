@@ -35,7 +35,7 @@ SAMPLE_RATE_HZ = 20_000_000
 FFT_SIZE = 1024                      # 19.53125kHz bins at 20MS/s
 BIN_HZ = SAMPLE_RATE_HZ / FFT_SIZE
 NUM_SAMPLES = 2 ** 17                # per hop: ~6.5ms -> 128 averaged FFTs
-MAX_CAPTURE_SAMPLES = 2 ** 19        # longest single capture (868MHz control-link dwell)
+MAX_CAPTURE_SAMPLES = 2 ** 20        # longest single capture (868MHz dwell, retune test)
 BASEBAND_FILTER_HZ = 15_000_000      # passband ~ +/-7.5MHz
 
 # Keep 716 bins (~13.98MHz) of every hop: +/-358 bins around DC. Hop step
@@ -47,6 +47,38 @@ HOP_STEP_HZ = 2 * KEEP_HALF_BINS * BIN_HZ
 # transfers in flight, so the first buffers after set_freq can still
 # hold the PREVIOUS frequency. 2^19 samples = 26ms covers all of them.
 SETTLE_SAMPLES = 2 ** 19
+# Pluto: buffers read and thrown away after each retune (same reason).
+PLUTO_DISCARD_READS = 1
+
+# Measured values (measure_retune.py) override the safe defaults above.
+TIMING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sdr_timing.json")
+
+
+def load_timing():
+    """Apply measured retune timings, if measure_retune.py has saved any."""
+    global SETTLE_SAMPLES, PLUTO_DISCARD_READS
+    try:
+        with open(TIMING_FILE) as fh:
+            t = json.load(fh)
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        print(f"Couldn't read {TIMING_FILE}: {e} - using safe default retune timing")
+        return None
+    if "hackrf_settle_samples" in t:
+        SETTLE_SAMPLES = int(t["hackrf_settle_samples"])
+    if "pluto_discard_reads" in t:
+        PLUTO_DISCARD_READS = int(t["pluto_discard_reads"])
+    return t
+
+
+def set_samples_per_hop(n):
+    """--samples: listening time per 14MHz slice. Fewer = faster sweeps but
+    a rougher noise floor (n/1024 FFTs averaged: 2^17 -> 128, 2^16 -> 64)."""
+    global NUM_SAMPLES
+    if n < 2 ** 14 or n > MAX_CAPTURE_SAMPLES or n & (n - 1):
+        raise ValueError(f"--samples must be a power of two between 16384 and {MAX_CAPTURE_SAMPLES}")
+    NUM_SAMPLES = n
 
 DC_EXCLUSION_HZ = 50_000
 
@@ -332,7 +364,8 @@ class PlutoReceiver:
             if self.lo != int(center_hz):
                 self.dev.rx_lo = int(center_hz)
                 self.lo = int(center_hz)
-                self._rx()                     # discard: may predate the retune
+                for _ in range(PLUTO_DISCARD_READS):
+                    self._rx()                 # discard: may predate the retune
             iq = np.asarray(self._rx())
         except Exception as e:
             self.dev = None                    # next capture reconnects
@@ -345,6 +378,10 @@ class PlutoReceiver:
 def open_receiver(sdr="hackrf", lna=16, vga=20, amp=False, hackrf_serial=None,
                   pluto_uri="ip:192.168.2.1", pluto_gain=40):
     """Open a HackRF or a Pluto - everything after this is the same."""
+    t = load_timing()
+    if t:
+        print(f"Using measured retune timing from {os.path.basename(TIMING_FILE)}: "
+              f"HackRF settle {SETTLE_SAMPLES} samples, Pluto discard {PLUTO_DISCARD_READS} read(s)")
     if sdr == "hackrf":
         from python_hackrf import pyhackrf
         return HackRFReceiver.open(pyhackrf, serial=hackrf_serial, lna_gain=lna, vga_gain=vga, amp=amp)
@@ -363,12 +400,28 @@ def add_sdr_args(ap):
     ap.add_argument("--pluto-uri", default="ip:192.168.2.1",
                     help="Pluto address: ip:192.168.2.1 (default), ip:192.168.3.1 for a second one, or usb:x.y.z")
     ap.add_argument("--pluto-gain", type=int, default=40, help="Pluto RX gain 0-70 dB (default 40)")
+    ap.add_argument("--samples", type=int, default=2 ** 17,
+                    help="samples per 14MHz slice: 131072 (default, ~6.5ms, smoothest), 65536 (2x faster), 32768 ...")
+    ap.add_argument("--band-reps", nargs="+", default=[], metavar="BAND=N",
+                    help="visit a band N times per cycle, e.g. 2.4=2 (bands with suspicious activity already "
+                         "get an extra visit automatically)")
     ap.add_argument("--level-offset-db", type=float, default=0.0,
                     help="added to this sensor's signal levels so different SDRs/antennas compare fairly "
                          "for positioning (see docs/SENSOR_NETWORK.md)")
 
 
+def band_reps_from_args(args):
+    reps = {}
+    for item in args.band_reps:
+        code, _, n = item.partition("=")
+        if code not in BAND_ARGS or not n.isdigit():
+            raise SystemExit(f"--band-reps: expected e.g. 2.4=2, got {item!r}")
+        reps[BAND_ARGS[code]] = int(n)
+    return reps
+
+
 def receiver_from_args(args):
+    set_samples_per_hop(args.samples)
     return open_receiver(args.sdr, lna=args.lna, vga=args.vga, amp=args.amp, hackrf_serial=args.hackrf_serial,
                          pluto_uri=args.pluto_uri, pluto_gain=args.pluto_gain)
 
@@ -403,7 +456,7 @@ def sweep_band(receiver, band):
     lo_hz, hi_hz = BANDS[band]
     freqs, dbs, floors, hops, segs = [], [], [], [], []
     for center in plan_hops(lo_hz, hi_hz):
-        samples = receiver.capture(center)
+        samples = receiver.capture(center, NUM_SAMPLES)
         f, db, sp = hop_spectrum(samples, center, with_segments=True)
         freqs.append(f)
         dbs.append(db)
@@ -722,6 +775,13 @@ BACKGROUND_BIN_MHZ = 3.0
 BACKGROUND_BUSY_FRACTION = 0.10
 
 
+def wide_strong(clusters):
+    """Any strong, wide signal - whatever its shape (what the background
+    learns, and what counts as 'new activity' for dual-band correlation)."""
+    return [c for c in clusters if c["bandwidth_mhz"] >= HOP_MIN_BW_MHZ
+            and c["above_noise_db"] >= HOP_MIN_ABOVE_NOISE_DB]
+
+
 def hop_candidates(clusters):
     return [c for c in clusters if c["bandwidth_mhz"] >= HOP_MIN_BW_MHZ
             and c["above_noise_db"] >= HOP_MIN_ABOVE_NOISE_DB
@@ -748,7 +808,9 @@ class BackgroundModel:
         self.alpha = alpha
 
     def update(self, clusters):
-        bins = {int(c["peak_mhz"] // BACKGROUND_BIN_MHZ) for c in hop_candidates(clusters)}
+        # Learns where ANY strong wide signal normally sits (flat WiFi too,
+        # not just peaked ones), so 'new' really means new.
+        bins = {int(c["peak_mhz"] // BACKGROUND_BIN_MHZ) for c in wide_strong(clusters)}
         self.sweeps += 1
         a = max(self.alpha, 1.0 / self.sweeps)   # plain average while learning
         for b in set(self.busy) | bins:
@@ -861,6 +923,10 @@ VIDEO_MIN_BANDWIDTH_MHZ = 5.0
 # so it can't reach "high" without the duty cycle showing a continuous
 # transmitter. (Seen in testing: bursty WiFi scored 85% on shape alone.)
 DIGITAL_SHAPE_MAX_CONF = 0.6
+# Site baseline (site_baseline.py): how busy a signal's frequency normally is.
+BASELINE_KNOWN_PCT = 80.0      # normally busy -> a known fixed emitter
+BASELINE_COMMON_PCT = 20.0
+BASELINE_QUIET_PCT = 2.0
 
 
 def video_class(c):
@@ -878,7 +944,7 @@ def _pct(x):
     return f"{x:.0%}"
 
 
-def detections_for_band(result, signatures=(), modulation_analyzer=None, duty_tracker=None):
+def detections_for_band(result, signatures=(), modulation_analyzer=None, duty_tracker=None, baseline=None):
     """Measure and classify every cluster in a swept band.
     Returns (detections, clusters). Every cluster gets duty cycle, airtime,
     WiFi-channel and video-type annotations (shown on the Raw Data and
@@ -892,7 +958,9 @@ def detections_for_band(result, signatures=(), modulation_analyzer=None, duty_tr
         lo_hz, hi_hz = result["freqs_hz"][c["_lo_idx"]], result["freqs_hz"][c["_hi_idx"]]
         duty, n = duty_tracker.duty(lo_hz, hi_hz) if duty_tracker is not None else (None, 0)
         air = airtime_pct(result, c["_lo_idx"], c["_hi_idx"])
+        base_occ = baseline.occupancy(band, lo_hz / 1e6, hi_hz / 1e6) if baseline is not None else None
         c.update(duty_cycle_pct=duty, duty_sweeps=n, airtime_pct=air, persistence=persistence_label(duty, air),
+                 baseline_occupancy_pct=base_occ,
                  video_class=video_class(c),
                  wifi_channel_mhz=nearest_channel(c["center_mhz"], WIFI_CHANNELS_MHZ, WIFI_CHANNEL_TOLERANCE_MHZ))
 
@@ -951,6 +1019,20 @@ def detections_for_band(result, signatures=(), modulation_analyzer=None, duty_tr
             else:
                 reasons.append({"text": f"Duty cycle still being measured ({c['duty_sweeps']}/{DUTY_MIN_SWEEPS} sweeps)",
                                 "effect": "no change yet"})
+            bo = c.get("baseline_occupancy_pct")
+            if bo is not None:
+                if bo >= BASELINE_KNOWN_PCT:
+                    conf *= 0.3
+                    reasons.append({"text": f"This frequency was busy {bo:.0f}% of the time in the site baseline - "
+                                            "a known fixed emitter here, not something new", "effect": "x0.3"})
+                elif bo >= BASELINE_COMMON_PCT:
+                    conf *= 0.7
+                    reasons.append({"text": f"Busy {bo:.0f}% of the time in the site baseline - common here",
+                                    "effect": "x0.7"})
+                elif bo <= BASELINE_QUIET_PCT:
+                    conf = min(0.95, conf + 0.05)
+                    reasons.append({"text": f"This frequency was quiet in the site baseline (busy {bo:.0f}%) - "
+                                            "new activity", "effect": "+5%"})
             if wifi_ch is not None:
                 if p == "continuous":
                     reasons.append({"text": f"Sits on WiFi channel {wifi_ch} MHz, but it is continuous and WiFi "
