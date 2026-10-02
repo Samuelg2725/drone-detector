@@ -1113,6 +1113,11 @@
             const status = document.getElementById('spectrumStatus');
             status.style.color = '#4caf50';
             status.innerText = `Sweep #${spec.scan_number} (${spec.sweep_seconds}s) · ${band.range_mhz[0]}–${band.range_mhz[1]} MHz · noise floor ${band.noise_floor_db} dB · ${new Date(spec.timestamp).toLocaleTimeString()}`;
+            const bg = band.background;
+            if (bg && bg.learning) {
+                status.style.color = '#ffb74d';
+                status.innerText = `Learning normal background ${bg.sweeps}/${bg.learn_sweeps} sweeps - keep drones OFF · ` + status.innerText;
+            }
             const peaks = band.peaks || [];
             document.getElementById('spectrumPeaks').innerHTML = peaks.length
                 ? `<strong>Strongest RF activity in ${selectedBand}</strong> (generic signals, not drone classifications): ` +

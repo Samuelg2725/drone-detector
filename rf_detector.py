@@ -361,7 +361,7 @@ class SignatureTracker:
 
 
 def classify_cluster(cluster, band, signatures=()):
-    """(label, confidence, method) or None.
+    """(label, confidence, method, signature, channel) or None.
 
     1. Calibrated signatures (learned from YOUR drone by
        calibrate_detector.py) - checked first, highest confidence.
@@ -380,11 +380,97 @@ def classify_cluster(cluster, band, signatures=()):
     bw = cluster["bandwidth_mhz"]
     if cf >= 7.0 and edge >= 10.0 and bw >= ANALOG_MIN_BANDWIDTH_MHZ:
         conf = min(0.95, 0.5 + (cf - 7.0) / 20.0 + (edge - 10.0) / 40.0)
-        return "Analog Video Link (unverified - shape match only)", round(conf, 3), "shape", None, None
+        label = "Analog FPV video link" if band == "5.8GHz" else "Analog video link"
+        return label + " (shape match)", round(conf, 3), "shape", None, None
     if cf < 5.0 and edge < 8.0 and 10.0 <= bw <= 40.0:
         conf = min(0.90, 0.5 + (5.0 - cf) / 20.0 + (8.0 - edge) / 40.0)
-        return "Digital Video Link (unverified - shape match only)", round(conf, 3), "shape", None, None
+        return "Wideband digital link (OFDM - may be WiFi)", round(conf, 3), "shape", None, None
     return None
+
+
+# ======================== Calibration-free hopping detection ======================== #
+
+# Validated on a real recording of a 2.4GHz hopping-video drone: with the
+# background learned from drone-off sweeps, 0% of drone-off sweeps and
+# ~90% of drone-on sweeps were flagged.
+HOP_MIN_BW_MHZ = 3.0          # wider than Bluetooth/BLE hops (~1-2MHz)
+HOP_MIN_ABOVE_NOISE_DB = 15.0
+HOP_MIN_CREST_DB = 6.0
+HOP_WINDOW_SWEEPS = 5
+HOP_MIN_PRESENT = 4           # strong signal in >= 4 of the last 5 sweeps
+HOP_MIN_CHANNELS = 3          # ...peaking on >= 3 frequencies...
+HOP_CHANNEL_SPACING_MHZ = 3.0 # ...at least this far apart
+HOP_MIN_NEW_CHANNELS = 2      # >= 2 of which aren't normal background
+BACKGROUND_BIN_MHZ = 3.0
+BACKGROUND_BUSY_FRACTION = 0.10
+
+
+def hop_candidates(clusters):
+    return [c for c in clusters if c["bandwidth_mhz"] >= HOP_MIN_BW_MHZ
+            and c["above_noise_db"] >= HOP_MIN_ABOVE_NOISE_DB
+            and c["crest_factor_db"] >= HOP_MIN_CREST_DB]
+
+
+def distinct_channels(peaks, spacing=HOP_CHANNEL_SPACING_MHZ):
+    out = []
+    for p in sorted(peaks):
+        if not out or p - out[-1] >= spacing:
+            out.append(p)
+    return out
+
+
+class BackgroundModel:
+    """Where strong wide signals normally peak in this band (WiFi routers
+    and the like). Learned at startup, then updated slowly - but only
+    from sweeps where nothing is being detected, so a drone hovering
+    nearby never gets absorbed into the 'normal' background."""
+
+    def __init__(self, alpha=0.01):
+        self.busy = {}      # 3MHz bin -> fraction of sweeps with a peak there
+        self.sweeps = 0
+        self.alpha = alpha
+
+    def update(self, clusters):
+        bins = {int(c["peak_mhz"] // BACKGROUND_BIN_MHZ) for c in hop_candidates(clusters)}
+        self.sweeps += 1
+        a = max(self.alpha, 1.0 / self.sweeps)   # plain average while learning
+        for b in set(self.busy) | bins:
+            self.busy[b] = (1 - a) * self.busy.get(b, 0.0) + a * (b in bins)
+
+    def is_background(self, peak_mhz):
+        b = int(peak_mhz // BACKGROUND_BIN_MHZ)
+        return max(self.busy.get(b + d, 0.0) for d in (-1, 0, 1)) >= BACKGROUND_BUSY_FRACTION
+
+    def busy_channels_mhz(self):
+        return sorted(round((b + 0.5) * BACKGROUND_BIN_MHZ, 1) for b, f in self.busy.items()
+                      if f >= BACKGROUND_BUSY_FRACTION)
+
+
+class HopDetector:
+    """Flags a transmitter that keeps jumping between frequencies: a strong,
+    wide signal present in most recent sweeps, peaking on several
+    different channels, at least two of them new compared with the
+    background. Needs no calibration."""
+
+    def __init__(self, background):
+        from collections import deque
+        self.background = background
+        self.window = deque(maxlen=HOP_WINDOW_SWEEPS)
+
+    def update(self, clusters):
+        """Call once per sweep. Returns a summary dict when hopping is seen, else None."""
+        self.window.append(hop_candidates(clusters))
+        recent = list(self.window)
+        present = sum(bool(x) for x in recent)
+        peaks = [c["peak_mhz"] for x in recent for c in x]
+        chans = distinct_channels(peaks)
+        new = [ch for ch in chans if not self.background.is_background(ch)]
+        if present < HOP_MIN_PRESENT or len(chans) < HOP_MIN_CHANNELS or len(new) < HOP_MIN_NEW_CHANNELS:
+            return None
+        latest = [c for c in recent[-1] if not self.background.is_background(c["peak_mhz"])]
+        best = max(latest or recent[-1] or [c for x in recent for c in x], key=lambda c: c["above_noise_db"])
+        return {"channels_mhz": [round(c, 1) for c in new], "present": present,
+                "window": len(recent), "cluster": best}
 
 
 def nearest_channel(center_mhz, channels, tol):
@@ -404,6 +490,33 @@ def isolate_signal(samples, hop_center_hz, sig_center_hz, bw_hz):
     f = np.fft.fftfreq(n, 1 / SAMPLE_RATE_HZ)
     spec[np.abs(f) > max(bw_hz, 200e3) / 2] = 0
     return np.fft.ifft(spec).astype(np.complex64)
+
+
+def threat_level(conf):
+    return "high" if conf > 0.8 else ("medium" if conf > 0.6 else "low")
+
+
+def cluster_detection(band, c, label, conf, method, sig=None, channel=None,
+                      modulation_hint=None, wifi_ch=None, fpv_ch=None):
+    return {
+        "band": band,
+        "drone_type": label,
+        "method": method,
+        "signature": sig["name"] if sig else None,
+        "channel_mhz": channel,
+        "confidence": conf,
+        "threat_level": threat_level(conf),
+        "frequency_mhz": c["center_mhz"],
+        "power_db": c["peak_db"],
+        "above_noise_db": c["above_noise_db"],
+        "bandwidth_mhz": c["bandwidth_mhz"],
+        "crest_factor_db": c["crest_factor_db"],
+        "edge_drop_db": c["edge_drop_db"],
+        "wifi_channel_aligned": wifi_ch is not None,
+        "wifi_channel_mhz": wifi_ch,
+        "fpv_channel_mhz": fpv_ch,
+        "modulation_hint": modulation_hint,
+    }
 
 
 def detections_for_band(result, signatures=(), modulation_analyzer=None):
@@ -432,25 +545,10 @@ def detections_for_band(result, signatures=(), modulation_analyzer=None):
             except Exception as e:
                 modulation_hint = {"error": str(e)}
 
-        detections.append({
-            "band": result["band"],
-            "drone_type": label,
-            "method": method,
-            "signature": sig["name"] if sig else None,
-            "channel_mhz": channel,
-            "confidence": conf,
-            "threat_level": "high" if conf > 0.8 else ("medium" if conf > 0.6 else "low"),
-            "frequency_mhz": c["center_mhz"],
-            "power_db": c["peak_db"],
-            "above_noise_db": c["above_noise_db"],
-            "bandwidth_mhz": c["bandwidth_mhz"],
-            "crest_factor_db": c["crest_factor_db"],
-            "edge_drop_db": c["edge_drop_db"],
-            "wifi_channel_aligned": wifi_ch is not None,
-            "wifi_channel_mhz": wifi_ch,
-            "fpv_channel_mhz": fpv_ch,
-            "modulation_hint": modulation_hint,
-        })
+        if fpv_ch is not None and method == "shape" and label.startswith("Analog"):
+            conf = round(min(0.95, conf + 0.1), 3)   # sits on a standard FPV video channel
+        detections.append(cluster_detection(result["band"], c, label, conf, method, sig, channel,
+                                            modulation_hint, wifi_ch, fpv_ch))
     return detections, clusters
 
 

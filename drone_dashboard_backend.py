@@ -47,6 +47,10 @@ except ImportError:
 
 SWEEP_BANDS = list(rf.BANDS)       # overridden by --bands
 SWEEP_PAUSE_S = 0.2                # rest between full sweeps
+# Sweeps spent learning the normal background (WiFi etc.) at startup,
+# before calibration-free hopping detection switches on. Keep drones
+# OFF for this (~25s with both bands). Overridden by --learn-sweeps.
+LEARN_SWEEPS = 20
 
 # The dashboard shows "HackRF connected" only if a sweep actually
 # finished recently - not just because the script is running.
@@ -124,10 +128,13 @@ def record_detection(det):
     now = time.time()
     for d in detections:
         if now - d["_last_seen"] > REPEAT_WINDOW_S:
-            break  # newest first - everything after is older still
-        same_signature = det.get("signature") and d.get("signature") == det["signature"]
-        if (d["band"] == det["band"] and d["drone_type"] == det["drone_type"]
-                and (same_signature or abs(d["frequency_mhz"] - det["frequency_mhz"]) <= 2.0)):
+            continue
+        same_track = det.get("track_key") and d.get("track_key") == det["track_key"]
+        same_signal = (d["drone_type"] == det["drone_type"]
+                       and abs(d["frequency_mhz"] - det["frequency_mhz"]) <= 2.0)
+        if d["band"] == det["band"] and (same_track or same_signal):
+            if same_track and det["confidence"] > d["confidence"]:
+                d["drone_type"] = det["drone_type"]   # e.g. upgraded to "matches calibrated ..."
             d["_last_seen"] = now
             d["hits"] += 1
             d["last_seen"] = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -148,33 +155,103 @@ def record_detection(det):
 
 
 def public(det):
-    return {k: v for k, v in det.items() if not k.startswith("_")}
+    return {k: v for k, v in det.items() if not k.startswith("_") and k != "track_key"}
 
 
-def apply_signature_tracking(found, trackers):
-    """Calibrated matches -> one detection per signature per sweep. A
-    hopping signature is only reported as CONFIRMED (high) once it has
-    been seen on 2+ of its channels within its sweep window; before that
-    it's a low-confidence 'unconfirmed' sighting."""
-    out = [d for d in found if d["method"] != "calibrated"]
+# Shape-rule matches below this confidence are mostly WiFi (they're
+# halved on WiFi channels) - left on the live spectrum as RF activity,
+# not listed as detections. On a real drone-off recording this removed
+# 7 of the 8 generic matches; the drone's own signal is caught by the
+# hopping detector instead.
+MIN_SHAPE_CONFIDENCE = 0.5
+LINK_SPAN_MEMORY_SWEEPS = 10
+
+
+class BandState:
+    def __init__(self, learn_sweeps):
+        self.background = rf.BackgroundModel()
+        self.hop = rf.HopDetector(self.background)
+        self.trackers = {}
+        self.learn_sweeps = learn_sweeps
+        self.link_span = None        # (lo_mhz, hi_mhz) of the last hopping link
+        self.link_span_ttl = 0       # sweeps left before that span is forgotten
+
+    @property
+    def learning(self):
+        return self.background.sweeps < self.learn_sweeps
+
+
+def fuse_band(band, dets, clusters, state):
+    """Turn one band's raw per-cluster matches into what the dashboard
+    shows: at most one 'frequency-hopping link' detection (calibration-
+    free hop detector and/or a confirmed calibrated signature), plus any
+    remaining shape matches that aren't just fragments of it."""
+    hop = state.hop.update(clusters)
+    if state.learning:
+        hop = None
+
+    # Calibrated signatures for this band.
+    cal_confirmed, cal_unconfirmed = None, None
     for sig in signatures:
-        tracker = trackers.setdefault(sig["name"], rf.SignatureTracker(sig))
-        hits = [d for d in found if d.get("signature") == sig["name"]]
-        confirmed, seen = tracker.update({d["channel_mhz"] for d in hits})
-        if not hits:
+        if sig.get("band") != band:
             continue
-        best = dict(max(hits, key=lambda d: d["above_noise_db"]))
-        best["channels_seen"] = seen
-        if confirmed:
-            best["drone_type"] = (f"{sig['name']} - hopping confirmed" if sig.get("hopping")
-                                  else f"{sig['name']}")
-            best["confidence"] = float(sig.get("confidence", 0.85))
+        tracker = state.trackers.setdefault(sig["name"], rf.SignatureTracker(sig))
+        hits = [d for d in dets if d.get("signature") == sig["name"]]
+        confirmed, seen = tracker.update({d["channel_mhz"] for d in hits})
+        if hits:
+            best = dict(max(hits, key=lambda d: d["above_noise_db"]))
+            best["channels_seen"] = seen
+            if confirmed:
+                cal_confirmed = (sig, best)
+            else:
+                cal_unconfirmed = (sig, best)
+
+    out = []
+    span = None
+    if hop or cal_confirmed:
+        hopping = bool(hop) or bool(cal_confirmed and cal_confirmed[0].get("hopping"))
+        kind = f"Frequency-hopping video link ({band})" if hopping else f"Drone video link ({band})"
+        if hop:
+            det = rf.cluster_detection(band, hop["cluster"], kind, 0.85, "hopping")
+            det["channels_seen"] = hop["channels_mhz"]
         else:
-            best["drone_type"] = f"{sig['name']} - unconfirmed (1 channel so far)"
-            best["confidence"] = 0.5
-        best["threat_level"] = ("high" if best["confidence"] > 0.8 else
-                                "medium" if best["confidence"] > 0.6 else "low")
+            det = dict(cal_confirmed[1], drone_type=kind)
+        if cal_confirmed:
+            sig = cal_confirmed[0]
+            det["drone_type"] = f"{kind} - matches calibrated '{sig['name']}'"
+            det["confidence"] = max(det["confidence"], float(sig.get("confidence", 0.85)))
+            det["signature"] = sig["name"]
+            det["channels_seen"] = sorted(set(det.get("channels_seen", [])) | set(cal_confirmed[1]["channels_seen"]))
+        det["threat_level"] = rf.threat_level(det["confidence"])
+        det["track_key"] = f"link:{band}"   # one entry however much it hops
+        out.append(det)
+        chans = det.get("channels_seen") or [det["frequency_mhz"]]
+        span = (min(chans) - 12.0, max(chans) + 12.0)
+        state.link_span, state.link_span_ttl = span, LINK_SPAN_MEMORY_SWEEPS
+    elif state.link_span_ttl > 0:
+        # Hopping link seen recently but not confirmed this sweep: its
+        # fragments still mustn't show up as separate "analog" signals.
+        span = state.link_span
+        state.link_span_ttl -= 1
+    elif cal_unconfirmed:
+        sig, best = cal_unconfirmed
+        best["drone_type"] = f"Possible '{sig['name']}' - unconfirmed (1 channel so far)"
+        best["confidence"] = 0.5
+        best["threat_level"] = "low"
+        best["track_key"] = f"link:{band}:unconfirmed"
         out.append(best)
+
+    for d in dets:
+        if d["method"] != "shape" or d["confidence"] < MIN_SHAPE_CONFIDENCE:
+            continue
+        if span and span[0] <= d["frequency_mhz"] <= span[1]:
+            continue  # a fragment of the hopping link already reported
+        out.append(d)
+
+    # Keep learning what's normal - but never from a sweep with a
+    # detection in it, so a drone can't become "background".
+    if state.learning or (not out and state.link_span_ttl == 0):
+        state.background.update(clusters)
     return out
 
 
@@ -187,7 +264,8 @@ def scanning_loop():
         except Exception as e:
             print(f"Modulation analyzer unavailable ({e}) - continuing without it")
 
-    trackers = {}
+    states = {band: BandState(LEARN_SWEEPS) for band in SWEEP_BANDS}
+    learning_announced = False
     while True:
         try:
             t0 = time.time()
@@ -195,9 +273,18 @@ def scanning_loop():
             for band in SWEEP_BANDS:
                 result = rf.sweep_band(receiver, band)
                 spectra[band] = rf.spectrum_summary(result)
-                dets, _ = rf.detections_for_band(result, signatures, analyzer)
-                found.extend(dets)
-            found = apply_signature_tracking(found, trackers)
+                dets, clusters = rf.detections_for_band(result, signatures, analyzer)
+                st = states[band]
+                found.extend(fuse_band(band, dets, clusters, st))
+                spectra[band]["background"] = {
+                    "learning": st.learning,
+                    "sweeps": min(st.background.sweeps, st.learn_sweeps),
+                    "learn_sweeps": st.learn_sweeps,
+                    "busy_channels_mhz": st.background.busy_channels_mhz(),
+                }
+            if not learning_announced and not any(st.learning for st in states.values()):
+                learning_announced = True
+                print("Background learned - hopping detection is now active.")
 
             scan_stats["scans_ok"] += 1
             scan_stats["last_ok"] = time.time()
@@ -323,6 +410,8 @@ def parse_args():
                     help="which bands to sweep (default: both)")
     ap.add_argument("--lna", type=int, default=16, help="LNA gain 0-40 dB, steps of 8 (default 16)")
     ap.add_argument("--vga", type=int, default=20, help="VGA gain 0-62 dB, steps of 2 (default 20)")
+    ap.add_argument("--learn-sweeps", type=int, default=20,
+                    help="sweeps spent learning the background at startup, drones off (default 20, ~25s)")
     ap.add_argument("--amp", action="store_true",
                     help="enable the HackRF's +14dB front-end amp (helps weak 5.8GHz signals; "
                          "can overload near strong WiFi)")
@@ -332,6 +421,7 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     SWEEP_BANDS = [b + "GHz" for b in args.bands]
+    LEARN_SWEEPS = args.learn_sweeps
     signatures = rf.load_signatures()
 
     from python_hackrf import pyhackrf
@@ -348,6 +438,8 @@ if __name__ == "__main__":
         print(f"Loaded {len(signatures)} calibrated signature(s): " + ", ".join(s_["name"] for s_ in signatures))
     else:
         print("No drone_signatures.json yet - using generic shape rules only (run calibrate_detector.py to add yours)")
+    print(f"Learning the background for the first {LEARN_SWEEPS} sweeps - keep drones switched OFF until "
+          f"it says 'Background learned'.")
     print("Dashboard: http://localhost:8000")
     print("WebSocket: ws://localhost:8082/ws")
     try:
