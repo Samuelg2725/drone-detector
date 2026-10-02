@@ -31,9 +31,10 @@ LINK_SPAN_MEMORY_SWEEPS = 10
 
 
 class BandState:
-    def __init__(self, learn_sweeps):
-        self.background = rf.BackgroundModel()
-        self.hop = rf.HopDetector(self.background)
+    def __init__(self, learn_sweeps, band=None):
+        self.band = band
+        self.background = rf.BackgroundModel(band, min_sweeps=min(learn_sweeps, 10))
+        self.hop = rf.HopDetector(self.background, band)
         self.trackers = {}
         self.learn_sweeps = learn_sweeps
         self.control = control_link.ControlLinkDetector()
@@ -44,15 +45,53 @@ class BandState:
 
     @property
     def learning(self):
-        return self.background.sweeps < self.learn_sweeps
+        return self.background.learning
+
+    def learning_info(self):
+        bg = self.background
+        return {"learning": bg.learning, "elapsed_s": round(min(bg.elapsed_s, bg.learn_s), 1), "learn_s": bg.learn_s,
+                "busy_channels_mhz": bg.busy_channels_mhz()}
 
 
-def fuse_band(band, dets, clusters, state, signatures=()):
+# Graded confidence for the hopping rule (it used to be a flat 85%): more
+# normally-quiet channels, steadier presence and a stronger signal all add.
+HOP_BASE_CONF = 0.55
+HOP_PER_EXTRA_CHANNEL = 0.08      # per new channel beyond the minimum, up to +0.24
+HOP_PRESENCE_MAX = 0.08           # present in 80% -> +0, in 100% -> +0.08
+HOP_STRONG_DB, HOP_STRONG_BONUS = 25.0, 0.05
+
+
+def hop_confidence(hop, band):
+    extra = len(hop["channels_mhz"]) - rf.thr(band, "hop_min_new_channels")
+    ch_bonus = min(0.24, HOP_PER_EXTRA_CHANNEL * max(0, extra))
+    floor = rf.thr(band, "hop_min_present_frac")
+    pres_bonus = HOP_PRESENCE_MAX * max(0.0, (hop["present_frac"] - floor) / max(1e-9, 1 - floor))
+    level = hop["cluster"]["above_noise_db"]
+    lvl_bonus = HOP_STRONG_BONUS if level >= HOP_STRONG_DB else 0.0
+    conf = min(0.95, HOP_BASE_CONF + ch_bonus + pres_bonus + lvl_bonus)
+    w = hop["window_s"]
+    reasons = [
+        {"text": f"Over the last {w:.0f} s, a strong (>= {rf.thr(band, 'hop_min_db'):.0f} dB above noise), wide "
+                 f"(>= {rf.thr(band, 'hop_min_bw_mhz'):.0f} MHz), peaked signal was present in {hop['present']} of "
+                 f"{hop['window']} looks ({hop['present_frac']:.0%})", "effect": f"start at {HOP_BASE_CONF:.0%}"},
+        {"text": f"Its peak jumped between {len(hop['channels_mhz'])} frequencies that are normally quiet here: "
+                 + ", ".join(f"{c:.0f}" for c in hop["channels_mhz"])
+                 + f" MHz (needs {rf.thr(band, 'hop_min_new_channels')})",
+         "effect": f"+{ch_bonus:.0%}" if ch_bonus else "minimum met"},
+        {"text": f"Present in {hop['present_frac']:.0%} of looks (needs {floor:.0%})",
+         "effect": f"+{pres_bonus:.1%}" if pres_bonus else "minimum met"},
+        {"text": f"Strongest at +{level:.1f} dB above noise" + (f" (>= {HOP_STRONG_DB:.0f} dB)" if lvl_bonus else ""),
+         "effect": f"+{lvl_bonus:.0%}" if lvl_bonus else "no change"},
+    ]
+    return round(conf, 3), reasons
+
+
+def fuse_band(band, dets, clusters, state, signatures=(), now=None):
     """Turn one band's raw per-cluster matches into what the dashboard
     shows: at most one 'frequency-hopping link' detection (calibration-
     free hop detector and/or a confirmed calibrated signature), plus any
     remaining shape matches that aren't just fragments of it."""
-    hop = state.hop.update(clusters)
+    hop = state.hop.update(clusters, now)
     if state.learning:
         hop = None
 
@@ -83,19 +122,13 @@ def fuse_band(band, dets, clusters, state, signatures=()):
     if hop:
         kind = f"Frequency-hopping video link ({band})"
         if True:
-            det = rf.cluster_detection(band, hop["cluster"], kind, 0.85, "hopping")
+            conf, reasons = hop_confidence(hop, band)
+            det = rf.cluster_detection(band, hop["cluster"], kind, conf, "hopping")
             det["channels_seen"] = hop["channels_mhz"]
-            det["reasons"] = [
-                {"text": f"A strong (>= {rf.HOP_MIN_ABOVE_NOISE_DB:.0f} dB above noise), wide (>= {rf.HOP_MIN_BW_MHZ:.0f} MHz) "
-                         f"signal was present in {hop['present']} of the last {hop['window']} sweeps", "effect": None},
-                {"text": f"Its peak jumped between {len(hop['channels_mhz'])} frequencies that are normally quiet here: "
-                         + ", ".join(f"{c:.0f}" for c in hop["channels_mhz"]) + " MHz", "effect": None},
-                {"text": "A WiFi router stays on one channel; jumping between new channels is how this kind of "
-                         "drone video link behaves", "effect": "85%"},
-            ]
+            det["reasons"] = reasons
         if cal_confirmed:
             sig = cal_confirmed[0]
-            det["confidence"] = 0.9
+            det["confidence"] = round(min(0.95, det["confidence"] + 0.05), 3)
             det["reasons"].append(
                 {"text": f"Its channels also match a hopping pattern calibrated earlier (seen on "
                          f"{len(cal_confirmed[1]['channels_seen'])} of the learned channels) - the same kind of link, "
@@ -124,7 +157,7 @@ def fuse_band(band, dets, clusters, state, signatures=()):
     # Keep learning what's normal - but never from a sweep with a
     # detection in it, so a drone can't become "background".
     if state.learning or (not out and state.link_span_ttl == 0):
-        state.background.update(clusters)
+        state.background.update(clusters, now)
     return out
 
 
@@ -157,7 +190,7 @@ DUAL_ONLY_CONF = 0.60           # ...but only ever medium: a new dual-band WiFi 
 def new_activity_level(band, clusters, state, baseline):
     """Strongest NEW wide signal this visit (dB above noise), or None."""
     best = None
-    for c in rf.wide_strong(clusters):
+    for c in rf.wide_strong(clusters, band):
         if state.background.is_background(c["peak_mhz"]):
             continue
         bo = c.get("baseline_occupancy_pct")
@@ -220,7 +253,7 @@ class DetectorPipeline:
         self.bands = list(bands)
         self.signatures = list(signatures)
         self.analyzer = analyzer
-        self.states = {b: BandState(learn_sweeps) for b in self.bands}
+        self.states = {b: BandState(learn_sweeps, b) for b in self.bands}
         self.band_reps = dict(band_reps or {})
         self.sweeps = 0                 # completed cycles over all bands
         self.schedule = []
@@ -242,7 +275,7 @@ class DetectorPipeline:
         """A saved baseline replaces the startup background learning."""
         for band, st in self.states.items():
             if self.baseline.seed_background(band, st.background) or band == control_link.CONTROL_BAND:
-                st.background.sweeps = max(st.background.sweeps, st.learn_sweeps)
+                st.background.mark_learned()
 
     @property
     def recording_baseline(self):
@@ -306,12 +339,7 @@ class DetectorPipeline:
             if band in self.dual and not st.learning:
                 self.dual[band].append((time.time(), new_activity_level(band, clusters, st, self.baseline)))
                 found = self.apply_dual_band(band, found, clusters)
-            summary["background"] = {
-                "learning": st.learning,
-                "sweeps": min(st.background.sweeps, st.learn_sweeps),
-                "learn_sweeps": st.learn_sweeps,
-                "busy_channels_mhz": st.background.busy_channels_mhz(),
-            }
+            summary["background"] = st.learning_info()
             st.active = bool(found) or sum(bool(x) for x in st.hop.window) >= 2
         if band == control_link.CONTROL_BAND:
             st.active = bool(found) or sum(bool(x) for x in st.control.window) >= 3
@@ -345,6 +373,8 @@ class DetectorPipeline:
             "sweep_seconds": self.last_cycle_seconds,
             "learning": self.learning,
             "baseline": self.baseline_status(),
+            "learning_progress": {"elapsed_s": round(min(st_.background.elapsed_s for st_ in self.states.values()), 1),
+                                  "learn_s": max(st_.background.learn_s for st_ in self.states.values())},
             "spectra": {band: summary},
             "detections": found,
         }
@@ -362,7 +392,7 @@ class DetectorPipeline:
         has_video = any(d["method"] in VIDEO_METHODS for d in found)
         level = self.dual[band][-1][1]
         if not has_video and level is not None and ev["f7"] >= DUAL_ONLY_MIN_F7:
-            strongest = max(rf.wide_strong(clusters), key=lambda c: c["above_noise_db"])
+            strongest = max(rf.wide_strong(clusters, band), key=lambda c: c["above_noise_db"])
             det = rf.cluster_detection(band, strongest, "Dual-band link activity (2.4 + 5 GHz)",
                                        round(min(0.75, DUAL_ONLY_CONF + ev["f9_bonus"]), 3), "dual-band")
             det["reasons"] = dual_band_reasons(ev) + [{
@@ -399,9 +429,8 @@ class DetectorPipeline:
         link = st.control.update(packets)
         if self.recording_baseline and not link and not st.active:
             self.baseline.add(band, result, [])
-        st.background.sweeps += 1          # 868MHz learning period just counts sweeps
-        summary["background"] = {"learning": st.learning, "sweeps": min(st.background.sweeps, st.learn_sweeps),
-                                 "learn_sweeps": st.learn_sweeps, "busy_channels_mhz": []}
+        st.background.tick()               # 868MHz: the learning period just counts time
+        summary["background"] = st.learning_info()
         summary["packets"] = len(packets)
         if not link or st.learning:
             return summary, None

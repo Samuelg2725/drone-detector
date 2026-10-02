@@ -112,6 +112,20 @@ def post(url, payload):
     urllib.request.urlopen(req, timeout=5).read()
 
 
+def sim_spectrum(level, rng, band="2.4GHz"):
+    """A minimal 2.4GHz spectrum for one sensor (noise + the drone's hops at
+    its received level), so the dashboard's Power page has data to compare."""
+    f = np.arange(2400.0, 2483.5, 0.5)
+    noise = np.full(len(f), -95.0)
+    power = noise + rng.normal(3, 1.5, len(f))
+    for c in (2452.0, 2457.0, 2462.0, 2467.0):
+        near = np.abs(f - c) <= 2.0
+        power[near] = np.maximum(power[near], noise[near] + max(level, 0) + rng.normal(0, 1, near.sum()))
+    return {band: {"band": band, "range_mhz": [2400.0, 2483.5], "noise_floor_db": -95.0,
+                   "freqs_mhz": f.round(3).tolist(), "power_db": power.round(1).tolist(),
+                   "noise_db": noise.tolist(), "peaks": []}}
+
+
 def online(args):
     rng = np.random.default_rng(args.seed)
     S = sensor_positions(args.layout, args.size_m)
@@ -137,7 +151,7 @@ def online(args):
                 })
             post(f"{base}/api/sensors/{sid}/report",
                  {"lat": lat, "lon": lon, "sweep_number": step + 1, "sweep_seconds": args.interval,
-                  "learning": False, "detections": dets})
+                  "learning": False, "detections": dets, "spectra": sim_spectrum(level, rng)})
         time.sleep(args.interval)
         tracks = [t for t in get_json(f"{base}/api/tracks")["data"]["items"] if t["status"] == "active"]
         heard = sum(level >= DETECT_THRESHOLD_DB for level in lv)

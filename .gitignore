@@ -69,3 +69,4 @@ calibration/
 sensors.json
 site_baseline.json
 sdr_timing.json
+thresholds.json

@@ -121,6 +121,7 @@
         /* Main Content */
         .main-content {
             flex: 1;
+            min-width: 0;
             margin-left: 280px;
             padding: 24px 32px;
         }
@@ -496,6 +497,10 @@
                     <i class="fas fa-wave-square"></i>
                     <span>Raw Data</span>
                 </div>
+                <div class="nav-item" data-page="power">
+                    <i class="fas fa-broadcast-tower"></i>
+                    <span>Power by Sensor</span>
+                </div>
                 <div class="nav-item" data-page="video">
                     <i class="fas fa-video"></i>
                     <span>Video Detections</span>
@@ -557,6 +562,12 @@
                         <div class="stat-value" id="uptime">0h</div>
                         <div class="stat-label">System Uptime</div>
                     </div>
+                </div>
+
+                <!-- System status: learning, baseline, speed per sensor -->
+                <div class="card" style="margin-bottom: 20px;">
+                    <div class="card-header"><h3><i class="fas fa-heartbeat"></i> System status</h3></div>
+                    <div class="card-content" id="systemStatus" style="font-size: 0.9em;">Waiting for sensors...</div>
                 </div>
 
                 <!-- Active drones: live status per drone track -->
@@ -873,6 +884,29 @@
                 </div>
             </div>
 
+            <!-- Power by sensor -->
+            <div id="powerPage" style="display: none; min-width: 0; max-width: 100%;">
+                <div class="card">
+                    <div class="card-header"><h3><i class="fas fa-broadcast-tower"></i> Power by sensor - every 1 MHz</h3>
+                        <span><select id="powerBand" class="raw-select" onchange="renderPower()"></select>
+                            <select id="powerShow" class="raw-select" onchange="renderPower()">
+                                <option value="active">Only frequencies with a signal (any sensor &ge; 10 dB)</option>
+                                <option value="detections">Only frequencies of current detections</option>
+                                <option value="all">All frequencies</option></select></span></div>
+                    <div class="card-content">
+                        <div style="font-size: 0.85em; color: #aaa; margin-bottom: 8px;">
+                            Each sensor's level at every 1 MHz (dB above its own noise floor, plus its <code>--level-offset-db</code>), as the
+                            <b>strongest reading in the last 5 s</b> - sensors sweep at slightly different moments and a hopping link is on a
+                            different channel at each look, so single instants wouldn't compare fairly. <b>Closest</b> = the loudest sensor, if it is
+                            at least 6 dB above the median of the others. Rows on a current drone detection's frequencies are highlighted.
+                            With one sensor there's nothing to compare - this needs 2+.
+                        </div>
+                        <div class="detections-table" style="max-height: 640px; overflow: auto; max-width: 100%;"><table style="white-space: nowrap;">
+                            <thead id="powerHead"></thead><tbody id="powerBody"><tr><td>Waiting for data...</td></tr></tbody></table></div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Video detections -->
             <div id="videoPage" style="display: none;">
                 <div class="card" style="margin-bottom: 20px;">
@@ -917,7 +951,7 @@
 
                         <h4>2. The rules, and the confidence each gives</h4>
                         <table><thead><tr><th>Rule</th><th>What it looks for</th><th>Confidence</th></tr></thead><tbody>
-                        <tr><td>Frequency-hopping video link (2.4 / 5 GHz)</td><td>A strong (&ge;15 dB), wide (&ge;3 MHz) signal in 4 of the last 5 sweeps, peaking on 3+ frequencies, at least 2 of them normally quiet here. WiFi routers don't jump around; this kind of drone link does. No calibration needed.</td><td>85%</td></tr>
+                        <tr><td>Frequency-hopping video link (2.4 / 5 GHz)</td><td>Over the last 5 s: a strong (&ge;15 dB), wide (&ge;3 MHz), peaked signal in &ge;80% of looks, peaking on 3+ frequencies, at least 3 of them normally quiet here. WiFi routers don't jump around; this kind of drone link does. No calibration needed.</td><td>graded 55-95%: +8% per extra new channel, up to +8% for steadier presence, +5% if &ge;25 dB</td></tr>
                         <tr><td>FHSS control link (868 MHz)</td><td>Short packets in 5 of the last 10 sweeps, on 6+ channels spread over 2+ MHz (ExpressLRS / Crossfire). Alarms, meters and LoRaWAN use one or a few fixed channels. <i>Not yet tested on a real link.</i></td><td>80%</td></tr>
                         <tr><td>Control + video at once</td><td>Both of the above (or a video match) at the same sensor - the strongest sign of an FPV drone.</td><td>92%</td></tr>
                         <tr><td>Analog FPV video (shape)</td><td>&ge;5 MHz wide, peaked in the middle (crest &ge;7 dB), tapering edges (edge drop &ge;10 dB).</td><td>starts 50-95% by shape; +10% on an FPV channel; +10% if continuous; halved if bursty; halved if on a WiFi channel and not continuous</td></tr>
@@ -926,6 +960,12 @@
                         </tbody></table>
                         <p>Below 50% nothing is reported (it stays visible in the Raw Data log). 50-60% = low, 60-80% = medium, above 80% = high.
                         Every detection has a <b>"Why it says this"</b> list showing exactly which of these applied.</p>
+
+                        <h4>Thresholds per band</h4>
+                        <p>The hopping rule's settings are kept per band. Defaults are the values tested on the real 2.4 GHz drone recording;
+                        override any of them for a band in <code>thresholds.json</code> next to the code, e.g.
+                        <code>{"5.8GHz": {"hop_min_db": 12}}</code>, then restart. Changed values show in orange.</p>
+                        <div class="detections-table"><table id="thresholdTable"></table></div>
 
                         <h4>Site baseline and dual-band correlation</h4>
                         <p><b>Site baseline</b> (optional, recommended): 5-15 minutes recorded with no drones, saved per sensor. Signals on
@@ -1099,8 +1139,34 @@
         }
 
         let mapCentredFor = 0;
+
+        function fmtDuration(sec) {
+            sec = Math.max(0, Math.round(sec));
+            return sec >= 60 ? `${Math.floor(sec / 60)}m ${sec % 60}s` : `${sec}s`;
+        }
+
+        function renderSystemStatus(list) {
+            const el = document.getElementById('systemStatus');
+            if (!list.length) { el.innerHTML = 'Waiting for sensors...'; return; }
+            el.innerHTML = list.map(s => {
+                const lp = s.learning_progress || {};
+                const learning = s.learning
+                    ? `<span style="color:#ffb74d"><b>Learning the background</b>: ${fmtDuration(lp.elapsed_s || 0)} of ${fmtDuration(lp.learn_s || 30)} - keep drones off</span>`
+                    : '<span style="color:#4caf50">Detecting</span>';
+                const b = s.baseline || {};
+                const baseline = b.state === 'recording'
+                    ? `<span style="color:#4facfe">Site baseline: building in the background ${b.progress_pct}% (${fmtDuration(b.seconds_left)} left) - detection is running</span>`
+                    : b.state === 'loaded' ? `<span style="color:#4caf50">Site baseline: ready (recorded ${new Date(b.recorded_at).toLocaleString()})</span>`
+                    : b.state === 'off' ? 'Site baseline: switched off' : 'Site baseline: none yet';
+                return `<div style="padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                    <b>${s.sensor_id}</b> ${s.sdr ? '(' + s.sdr + ')' : ''} ·
+                    ${s.online ? '<span style="color:#4caf50">online</span>' : '<span style="color:#ff6b6b">offline</span>'} ·
+                    ${s.sweep_seconds ? s.sweep_seconds + ' s per full cycle' : 'first cycle...'} · ${learning}<br>${baseline}</div>`;
+            }).join('');
+        }
         function updateSensors(list) {
             sensorsList = list || [];
+            renderSystemStatus(sensorsList);
             const sel = document.getElementById('placeSensor');
             const current = sel.value;
             sel.innerHTML = sensorsList.map(s => `<option value="${s.sensor_id}">${s.sensor_id}${s.lat == null ? ' (not placed)' : ''}</option>`).join('');
@@ -1314,7 +1380,7 @@
         }
         
         function showPage(page) {
-            const pages = ['dashboard', 'map', 'detections', 'alerts', 'hardware', 'raw', 'video', 'howto', 'analytics', 'settings'];
+            const pages = ['dashboard', 'map', 'detections', 'alerts', 'hardware', 'raw', 'power', 'video', 'howto', 'analytics', 'settings'];
             pages.forEach(p => {
                 const element = document.getElementById(p + 'Page');
                 if (element) element.style.display = 'none';
@@ -1345,6 +1411,12 @@
             }
             if (page === 'video') {
                 renderVideo();
+            }
+            if (page === 'power') {
+                renderPower();
+            }
+            if (page === 'howto') {
+                renderThresholds();
             }
         }
         
@@ -1501,6 +1573,48 @@
             } catch (error) {
                 console.error('Error loading spectrum:', error);
             }
+        }
+
+        // ---------------- Power by sensor ----------------
+        async function renderPower() {
+            const sel = document.getElementById('powerBand');
+            const bands = [...new Set(sensorsList.flatMap(s => s.bands || []))].sort();
+            if (sel.options.length !== bands.length) { const cur = sel.value; sel.innerHTML = bands.map(b => `<option>${b}</option>`).join(''); if (cur) sel.value = cur; }
+            if (!sel.value) return;
+            let t;
+            try { t = (await (await fetch(`${API_URL}/power?band=${encodeURIComponent(sel.value)}`)).json()).data; } catch (e) { return; }
+            const show = document.getElementById('powerShow').value;
+            const rows = t.rows.filter(r => show === 'all' || (show === 'active' ? r.active : r.detections.length));
+            const maxLv = Math.max(10, ...t.rows.map(r => r.top));
+            document.getElementById('powerHead').innerHTML = `<tr><th>MHz</th>${t.sensors.map(s => `<th>${s}</th>`).join('')}
+                <th>Closest</th><th>Margin</th><th>Detection here</th></tr>`;
+            document.getElementById('powerBody').innerHTML = rows.length ? rows.map(r => `
+                <tr style="${r.detections.length ? 'background: rgba(255,68,68,0.12);' : ''}"><td><b>${r.mhz}-${r.mhz + 1}</b></td>
+                ${t.sensors.map(sid => {
+                    const v = r.levels[sid];
+                    if (v === undefined) return '<td>-</td>';
+                    const w = Math.max(0, Math.min(100, v / maxLv * 100));
+                    const best = sid === r.closest;
+                    return `<td><div style="display:flex;align-items:center;gap:6px;"><div style="width:70px;height:8px;background:rgba(255,255,255,0.06);border-radius:4px;">
+                        <div style="width:${w}%;height:8px;border-radius:4px;background:${best ? '#ff4444' : '#4facfe'}"></div></div>
+                        <span style="${best ? 'font-weight:700;color:#ff6b6b' : ''}">${v > 0 ? '+' : ''}${v}</span></div></td>`;
+                }).join('')}
+                <td>${r.closest ? `<b style="color:#ff6b6b">${r.closest}</b>` : (r.active && t.sensors.length > 1 ? '<span style="color:#888">no clear winner</span>' : '-')}</td>
+                <td>${r.margin_db === null ? '-' : r.margin_db + ' dB'}</td>
+                <td style="font-size:0.85em; white-space: normal; min-width: 220px;">${r.detections.join('<br>') || ''}</td></tr>`).join('')
+                : `<tr><td colspan="${t.sensors.length + 4}">Nothing to show with this filter</td></tr>`;
+        }
+        setInterval(() => { if (document.getElementById('powerPage').style.display !== 'none') renderPower(); }, 1500);
+
+        async function renderThresholds() {
+            try {
+                const d = (await (await fetch(`${API_URL}/thresholds`)).json()).data;
+                const keys = Object.keys(d.defaults), bands = Object.keys(d.bands);
+                document.getElementById('thresholdTable').innerHTML = `<thead><tr><th>Setting</th>${bands.map(b => `<th>${b}</th>`).join('')}</tr></thead><tbody>` +
+                    keys.map(k => `<tr><td><code>${k}</code></td>${bands.map(b => {
+                        const v = d.bands[b][k], changed = v !== d.defaults[k];
+                        return `<td style="${changed ? 'color:#ffb74d;font-weight:700' : ''}">${v}</td>`; }).join('')}</tr>`).join('') + '</tbody>';
+            } catch (e) {}
         }
 
         // ---------------- Signal log & video detections ----------------
@@ -1834,7 +1948,7 @@
             document.getElementById('rawSummary').innerHTML =
                 `<b>${rawSensor}</b> · ${rawBand} (${band.range_mhz[0]}–${band.range_mhz[1]} MHz) · sweep #${spec.scan_number}` +
                 ` took ${spec.sweep_seconds}s · noise floor ${band.noise_floor_db} dB · ${new Date(spec.timestamp).toLocaleTimeString()}` +
-                (band.background && band.background.learning ? ` · <span style="color:#ffb74d">learning background ${band.background.sweeps}/${band.background.learn_sweeps}</span>` : '');
+                (band.background && band.background.learning ? ` · <span style="color:#ffb74d">learning background ${Math.round(band.background.elapsed_s)}/${Math.round(band.background.learn_s)} s</span>` : '');
 
             drawWaterfall(rawHistory[rawSensor + '|' + rawBand] || []);
             drawRawSpectrum(rawHistory[rawSensor + '|' + rawBand] || [], band);
@@ -1916,7 +2030,7 @@
             const bg = band.background;
             if (bg && bg.learning) {
                 status.style.color = '#ffb74d';
-                status.innerText = `Learning normal background ${bg.sweeps}/${bg.learn_sweeps} sweeps - keep drones OFF · ` + status.innerText;
+                status.innerText = `Learning normal background ${Math.round(bg.elapsed_s)}/${Math.round(bg.learn_s)} s - keep drones OFF · ` + status.innerText;
             }
             const peaks = band.peaks || [];
             document.getElementById('spectrumPeaks').innerHTML = peaks.length
@@ -2029,7 +2143,7 @@
                         <div class="drone-status-main">
                             <div class="label">${t.drone_type}</div>
                             <div class="meta">
-                                ${t.frequency_mhz} MHz · ${(t.confidence * 100).toFixed(0)}% ·
+                                ${t.frequency_mhz} MHz · ${(t.confidence * 100).toFixed(1)}% ·
                                 ${t.status === 'active'
                                     ? `active for ${formatAgo(t.duration_s)} · last seen ${t.seen_ago_s}s ago`
                                     : `was active ${formatAgo(t.duration_s)} · gone since ${new Date(t.last_seen).toLocaleTimeString()}`}
@@ -2040,6 +2154,10 @@
                                 ${t.channels_seen ? ` · channels ${t.channels_seen.map(c => Math.round(c)).join(', ')}` : ''}
                                 ${t.persistence && t.persistence !== 'collecting' ? ` · ${t.persistence} (duty ${t.duty_cycle_pct}%, airtime ${t.airtime_pct}%)` : ''}
                             </div>
+                            ${t.power_check && Object.keys(t.power_check.levels).length > 1 ? `<div class="meta">Power check (strongest level per sensor on this drone's frequencies, last 5 s): ` +
+                                Object.entries(t.power_check.levels).map(([k, v]) => `${k} +${v} dB`).join(' · ') +
+                                (t.power_check.clear ? ` → <b>closest: ${t.power_check.closest}</b> (${t.power_check.margin_db} dB above the others)`
+                                                     : ` → no sensor clearly closer (${t.power_check.margin_db} dB margin, needs 6)`) + '</div>' : ''}
                             ${reasonsHtml(t.reasons)}
                         </div>
                     </div>`;
@@ -2055,7 +2173,7 @@
         function updateMetrics(metrics) {
             document.getElementById('totalDetections').innerText = metrics.total_detections || 0;
             document.getElementById('activeThreats').innerText = metrics.active_drones || 0;
-            document.getElementById('confidence').innerText = `${Math.round((metrics.current_confidence || 0) * 100)}%`;
+            document.getElementById('confidence').innerText = `${((metrics.current_confidence || 0) * 100).toFixed(1)}%`;
             document.getElementById('uptime').innerText = formatUptime(metrics.system_uptime || 0);
         }
         

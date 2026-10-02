@@ -763,32 +763,79 @@ def classify_cluster(cluster, band, signatures=()):
 # Validated on a real recording of a 2.4GHz hopping-video drone: with the
 # background learned from drone-off sweeps, 0% of drone-off sweeps and
 # ~90% of drone-on sweeps were flagged.
-HOP_MIN_BW_MHZ = 3.0          # wider than Bluetooth/BLE hops (~1-2MHz)
-HOP_MIN_ABOVE_NOISE_DB = 15.0
-HOP_MIN_CREST_DB = 6.0
-HOP_WINDOW_SWEEPS = 5
-HOP_MIN_PRESENT = 4           # strong signal in >= 4 of the last 5 sweeps
-HOP_MIN_CHANNELS = 3          # ...peaking on >= 3 frequencies...
-HOP_CHANNEL_SPACING_MHZ = 3.0 # ...at least this far apart
-HOP_MIN_NEW_CHANNELS = 2      # >= 2 of which aren't normal background
+# All the hopping-detector thresholds, PER BAND. Every band starts from
+# DEFAULT_THRESHOLDS; thresholds.json (same keys, by band name) overrides any
+# of them, e.g. {"5.8GHz": {"hop_min_db": 12}}. The defaults are the values
+# validated on the real 2.4GHz recording; there isn't yet data to justify
+# different values for other bands - the mechanism is here for when there is.
+#
+# Windows are in SECONDS, not sweeps: after the sweep got ~2.5x faster,
+# "4 of the last 5 sweeps" shrank from ~5s to ~2s and "learn for 20
+# sweeps" from ~22s to ~9s - too short to see all of a site's WiFi -
+# which caused false hopping alarms at a steady 85%.
+DEFAULT_THRESHOLDS = {
+    "hop_min_db": 15.0,             # strong: >= this above the noise floor
+    "hop_min_bw_mhz": 3.0,          # wide: more than Bluetooth/BLE hops (~1-2MHz)
+    "hop_min_crest_db": 6.0,        # peaked (the drone link measured 7-33dB)
+    "hop_window_s": 5.0,            # look back this far...
+    "hop_min_present_frac": 0.8,    # ...strong signal in >= 80% of the visits...
+    "hop_min_visits": 3,
+    "hop_min_channels": 3,          # ...peaking on >= 3 frequencies...
+    "hop_channel_spacing_mhz": 3.0,  # ...this far apart...
+    "hop_min_new_channels": 3,      # ...>= 3 of them normally quiet here (was 2)
+    "learn_s": 30.0,                # startup background learning (time, not sweeps)
+}
+BAND_THRESHOLDS = {}
+THRESHOLDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "thresholds.json")
 BACKGROUND_BIN_MHZ = 3.0
 BACKGROUND_BUSY_FRACTION = 0.10
+BACKGROUND_TAU_S = 300.0            # after learning, background adapts over ~5 min
 
 
-def wide_strong(clusters):
+def load_thresholds():
+    """Per-band overrides from thresholds.json, e.g.
+    {"5.8GHz": {"hop_min_db": 18}, "2.4GHz": {"hop_min_new_channels": 4}}.
+    Anything not listed keeps DEFAULT_THRESHOLDS."""
+    try:
+        with open(THRESHOLDS_FILE) as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        return False
+    except ValueError as e:
+        print(f"WARNING: {THRESHOLDS_FILE} is not valid JSON ({e}) - using the default thresholds")
+        return False
+    for band, vals in data.items():
+        if band not in BANDS or not isinstance(vals, dict):
+            print(f"WARNING: thresholds.json: unknown band '{band}' ignored (bands: {', '.join(BANDS)})")
+            continue
+        for k, v in vals.items():
+            if k not in DEFAULT_THRESHOLDS:
+                print(f"WARNING: thresholds.json: unknown setting '{k}' for {band} ignored")
+            else:
+                BAND_THRESHOLDS.setdefault(band, {})[k] = float(v)
+    return True
+
+
+def thr(band, key):
+    return BAND_THRESHOLDS.get(band, {}).get(key, DEFAULT_THRESHOLDS[key])
+
+
+def thresholds_table(bands):
+    return {b: {k: thr(b, k) for k in DEFAULT_THRESHOLDS} for b in bands}
+
+
+def wide_strong(clusters, band=None):
     """Any strong, wide signal - whatever its shape (what the background
     learns, and what counts as 'new activity' for dual-band correlation)."""
-    return [c for c in clusters if c["bandwidth_mhz"] >= HOP_MIN_BW_MHZ
-            and c["above_noise_db"] >= HOP_MIN_ABOVE_NOISE_DB]
+    return [c for c in clusters if c["bandwidth_mhz"] >= thr(band, "hop_min_bw_mhz")
+            and c["above_noise_db"] >= thr(band, "hop_min_db")]
 
 
-def hop_candidates(clusters):
-    return [c for c in clusters if c["bandwidth_mhz"] >= HOP_MIN_BW_MHZ
-            and c["above_noise_db"] >= HOP_MIN_ABOVE_NOISE_DB
-            and c["crest_factor_db"] >= HOP_MIN_CREST_DB]
+def hop_candidates(clusters, band=None):
+    return [c for c in wide_strong(clusters, band) if c["crest_factor_db"] >= thr(band, "hop_min_crest_db")]
 
 
-def distinct_channels(peaks, spacing=HOP_CHANNEL_SPACING_MHZ):
+def distinct_channels(peaks, spacing=3.0):
     out = []
     for p in sorted(peaks):
         if not out or p - out[-1] >= spacing:
@@ -798,21 +845,51 @@ def distinct_channels(peaks, spacing=HOP_CHANNEL_SPACING_MHZ):
 
 class BackgroundModel:
     """Where strong wide signals normally peak in this band (WiFi routers
-    and the like). Learned at startup, then updated slowly - but only
-    from sweeps where nothing is being detected, so a drone hovering
-    nearby never gets absorbed into the 'normal' background."""
+    and the like). Learned for learn_s seconds at startup (or taken from a
+    saved site baseline), then updated slowly - but only from visits where
+    nothing is being detected, so a drone nearby never becomes 'normal'."""
 
-    def __init__(self, alpha=0.01):
-        self.busy = {}      # 3MHz bin -> fraction of sweeps with a peak there
+    def __init__(self, band=None, min_sweeps=10):
+        self.band = band
+        self.busy = {}      # 3MHz bin -> fraction of visits with a strong peak there
         self.sweeps = 0
-        self.alpha = alpha
+        self.min_sweeps = min_sweeps
+        self.t0 = None
+        self.last = None
+        self.learned = False
 
-    def update(self, clusters):
-        # Learns where ANY strong wide signal normally sits (flat WiFi too,
-        # not just peaked ones), so 'new' really means new.
-        bins = {int(c["peak_mhz"] // BACKGROUND_BIN_MHZ) for c in wide_strong(clusters)}
+    @property
+    def learn_s(self):
+        return thr(self.band, "learn_s")
+
+    @property
+    def elapsed_s(self):
+        return 0.0 if self.t0 is None else (self.last if self.last is not None else time.time()) - self.t0
+
+    @property
+    def learning(self):
+        if self.learned:
+            return False
+        if self.sweeps >= self.min_sweeps and self.elapsed_s >= self.learn_s:
+            self.learned = True
+        return not self.learned
+
+    def mark_learned(self):
+        self.learned = True
+
+    def tick(self, now=None):
+        now = time.time() if now is None else now
+        if self.t0 is None:
+            self.t0 = now
         self.sweeps += 1
-        a = max(self.alpha, 1.0 / self.sweeps)   # plain average while learning
+        dt = 0.0 if self.last is None else now - self.last
+        self.last = now
+        return dt
+
+    def update(self, clusters, now=None):
+        dt = self.tick(now)
+        bins = {int(c["peak_mhz"] // BACKGROUND_BIN_MHZ) for c in wide_strong(clusters, self.band)}
+        a = 1.0 / self.sweeps if self.learning else 1.0 - np.exp(-dt / BACKGROUND_TAU_S)
         for b in set(self.busy) | bins:
             self.busy[b] = (1 - a) * self.busy.get(b, 0.0) + a * (b in bins)
 
@@ -826,30 +903,38 @@ class BackgroundModel:
 
 
 class HopDetector:
-    """Flags a transmitter that keeps jumping between frequencies: a strong,
-    wide signal present in most recent sweeps, peaking on several
-    different channels, at least two of them new compared with the
-    background. Needs no calibration."""
+    """Flags a transmitter that keeps jumping between frequencies: over the
+    last hop_window_s seconds, a strong wide peaked signal in most visits,
+    peaking on several frequencies, enough of them normally quiet here.
+    Needs no calibration."""
 
-    def __init__(self, background):
+    def __init__(self, background, band=None):
         from collections import deque
         self.background = background
-        self.window = deque(maxlen=HOP_WINDOW_SWEEPS)
+        self.band = band
+        self.window = deque()       # (time, candidates)
 
-    def update(self, clusters):
-        """Call once per sweep. Returns a summary dict when hopping is seen, else None."""
-        self.window.append(hop_candidates(clusters))
-        recent = list(self.window)
+    def update(self, clusters, now=None):
+        now = time.time() if now is None else now
+        b = self.band
+        self.window.append((now, hop_candidates(clusters, b)))
+        while self.window and now - self.window[0][0] > thr(b, "hop_window_s"):
+            self.window.popleft()
+        recent = [x for _, x in self.window]
+        visits = len(recent)
         present = sum(bool(x) for x in recent)
+        frac = present / visits if visits else 0.0
         peaks = [c["peak_mhz"] for x in recent for c in x]
-        chans = distinct_channels(peaks)
+        chans = distinct_channels(peaks, thr(b, "hop_channel_spacing_mhz"))
         new = [ch for ch in chans if not self.background.is_background(ch)]
-        if present < HOP_MIN_PRESENT or len(chans) < HOP_MIN_CHANNELS or len(new) < HOP_MIN_NEW_CHANNELS:
+        if (visits < thr(b, "hop_min_visits") or frac < thr(b, "hop_min_present_frac")
+                or len(chans) < thr(b, "hop_min_channels") or len(new) < thr(b, "hop_min_new_channels")):
             return None
         latest = [c for c in recent[-1] if not self.background.is_background(c["peak_mhz"])]
         best = max(latest or recent[-1] or [c for x in recent for c in x], key=lambda c: c["above_noise_db"])
-        return {"channels_mhz": [round(c, 1) for c in new], "present": present,
-                "window": len(recent), "cluster": best}
+        return {"channels_mhz": [round(c, 1) for c in new], "present": present, "window": visits,
+                "present_frac": round(frac, 3), "window_s": thr(b, "hop_window_s"),
+                "all_channels": len(chans), "cluster": best}
 
 
 def nearest_channel(center_mhz, channels, tol):

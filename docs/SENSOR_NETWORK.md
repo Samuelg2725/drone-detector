@@ -209,3 +209,30 @@ over the middle and leaves; the script prints the real error each second.
   (US) and 2.4GHz ExpressLRS control links, 1.2/1.3GHz long-range video,
   DJI's own protocol, and Remote ID / DJI DroneID decoding (which would give
   the drone's own GPS).
+
+## Per-band thresholds (thresholds.json)
+
+Every band uses the same hopping-detector thresholds until you have data saying
+otherwise. To change one band only, create `thresholds.json` next to
+`rf_detector.py` (it's per site, so it isn't in git):
+
+```json
+{
+  "5.8GHz": {"hop_min_db": 18},
+  "2.4GHz": {"hop_min_new_channels": 4, "hop_window_s": 6}
+}
+```
+
+Settings not listed keep their defaults. Restart the server or sensor to apply.
+The table on the dashboard's **How It Works** page shows the values in use,
+and changed values are highlighted. Base changes on recordings (drone off and
+drone on, at that site), not guesses.
+
+## Power by Sensor page
+
+This page shows every 1 MHz of a band, each sensor's level (dB above its own
+noise, plus `--level-offset-db`) and the strongest reading in the last 5 s.
+**Closest** marks the loudest sensor when it is at least 6 dB above the median
+of the others. Rows on a current detection's frequencies are highlighted. Each
+drone on the dashboard also shows this check ("closest by power"). It needs at
+least two sensors that cover the same band.

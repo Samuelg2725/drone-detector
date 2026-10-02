@@ -145,6 +145,7 @@ def sensor_public(s, now=None):
         "reports": s.get("reports", 0),
         "sdr": s.get("sdr"),
         "baseline": s.get("baseline"),
+        "learning_progress": s.get("learning_progress"),
         "level_offset_db": s.get("level_offset_db", 0.0),
     }
 
@@ -249,6 +250,11 @@ def public(det):
     out["nearest_sensor"] = levels[0]["sensor_id"] if levels else None
     out["estimated_distance_m"] = levels[0]["estimated_distance_m"] if levels else None
     out["trend"] = det.get("_trend", "steady")
+    if out["status"] == "active":
+        try:
+            out["power_check"] = detection_closest_by_power(det)
+        except Exception:
+            out["power_check"] = None
     if len(levels) > 1:
         out["reasons"] = list(out.get("reasons") or []) + [{
             "text": f"Heard by {len(levels)} sensors at once (loudest: {levels[0]['sensor_id']} "
@@ -425,6 +431,100 @@ def video_public():
             for v in video_emitters[:300]]
 
 
+# ======================== Power per MHz, per sensor ======================== #
+
+# For every 1MHz of every band, each sensor's level (dB above its own noise
+# floor, plus its --level-offset-db), as the HIGHEST reading over the last
+# POWER_WINDOW_S: sensors sweep at slightly different moments and a hopping
+# link is on a different channel at each look, so comparing single
+# instants would be unfair. A sensor is "closest" for a frequency if it
+# hears it at least CLOSEST_MARGIN_DB louder than the median of the others.
+POWER_WINDOW_S = 5.0
+POWER_ACTIVE_DB = 10.0
+CLOSEST_MARGIN_DB = 6.0
+power_history = {}            # (sensor, band) -> deque[(t, start_mhz, levels per MHz)]
+
+
+def record_power(sensor_id, report):
+    now = time.time()
+    offset = sensors.get(sensor_id, {}).get("level_offset_db", 0.0)
+    for band, sp in (report.get("spectra") or {}).items():
+        f, p, n = sp.get("freqs_mhz"), sp.get("power_db"), sp.get("noise_db")
+        if not f or not p or not n:
+            continue
+        lo = int(np.floor(f[0]))
+        idx = (np.array(f) - lo).astype(int)
+        rel = np.array(p) - np.array(n)
+        lv = np.full(idx.max() + 1, -np.inf)
+        np.maximum.at(lv, idx, rel)
+        h = power_history.setdefault((sensor_id, band), deque())
+        h.append((now, lo, lv + offset))
+        while h and now - h[0][0] > POWER_WINDOW_S:
+            h.popleft()
+
+
+def power_table(band):
+    """Rows of {mhz, levels: {sensor: dB}, closest, margin_db, detections}."""
+    now = time.time()
+    per_sensor = {}
+    for (sid, b), h in power_history.items():
+        if b != band:
+            continue
+        recent = [(lo, lv) for t, lo, lv in h if now - t <= POWER_WINDOW_S]
+        if not recent:
+            continue
+        lo = recent[-1][0]
+        n = max(len(lv) for _, lv in recent)
+        best = np.full(n, -np.inf)
+        for l0, lv in recent:
+            if l0 == lo:
+                best[:len(lv)] = np.maximum(best[:len(lv)], lv)
+        per_sensor[sid] = (lo, best)
+    if not per_sensor:
+        return {"band": band, "sensors": [], "rows": []}
+    lo = min(v[0] for v in per_sensor.values())
+    hi = max(v[0] + len(v[1]) for v in per_sensor.values())
+    active = [d for d in detections if is_active(d, now) and d["band"] in (band, "2.4+5GHz")]
+    rows = []
+    for mhz in range(lo, hi):
+        levels = {}
+        for sid, (l0, lv) in per_sensor.items():
+            i = mhz - l0
+            if 0 <= i < len(lv) and np.isfinite(lv[i]):
+                levels[sid] = round(float(lv[i]), 1)
+        if not levels:
+            continue
+        ranked = sorted(levels.items(), key=lambda kv: -kv[1])
+        top_sid, top = ranked[0]
+        others = [v for _, v in ranked[1:]]
+        margin = round(top - float(np.median(others)), 1) if others else None
+        closest = top_sid if top >= POWER_ACTIVE_DB and margin is not None and margin >= CLOSEST_MARGIN_DB else None
+        dets = sorted({d["drone_type"] for d in active
+                       if any(abs(c - (mhz + 0.5)) <= 1.0 for c in (d.get("channels_seen") or [d["frequency_mhz"]]))})
+        rows.append({"mhz": mhz, "levels": levels, "top": top, "top_sensor": top_sid, "margin_db": margin,
+                     "closest": closest, "active": top >= POWER_ACTIVE_DB, "detections": dets})
+    return {"band": band, "sensors": sorted(per_sensor), "rows": rows}
+
+
+def detection_closest_by_power(d):
+    """For a drone track: per sensor, its strongest level over the track's
+    frequencies in the power table - and the sensor clearly loudest."""
+    chans = d.get("channels_seen") or [d["frequency_mhz"]]
+    totals = {}
+    for band in {d["band"]} if d["band"] in rf.BANDS else {"2.4GHz"}:
+        for r in power_table(band)["rows"]:
+            if any(abs(c - (r["mhz"] + 0.5)) <= 1.0 for c in chans):
+                for sid, v in r["levels"].items():
+                    totals[sid] = max(totals.get(sid, -np.inf), v)
+    if not totals:
+        return None
+    ranked = sorted(totals.items(), key=lambda kv: -kv[1])
+    others = [v for _, v in ranked[1:]]
+    margin = round(ranked[0][1] - float(np.median(others)), 1) if others else None
+    return {"levels": {k: round(v, 1) for k, v in ranked}, "closest": ranked[0][0], "margin_db": margin,
+            "clear": margin is None or margin >= CLOSEST_MARGIN_DB}
+
+
 # ======================== Ingesting sensor reports ======================== #
 
 def ingest_report(sensor_id, report):
@@ -445,6 +545,8 @@ def ingest_report(sensor_id, report):
         s["level_offset_db"] = float(report.get("level_offset_db") or 0.0)
         if report.get("baseline"):
             s["baseline"] = report["baseline"]
+        if report.get("learning_progress"):
+            s["learning_progress"] = report["learning_progress"]
         if report.get("baseline_profile"):
             s["baseline_profile"] = report["baseline_profile"]
         if report.get("spectra"):
@@ -456,6 +558,7 @@ def ingest_report(sensor_id, report):
             s["bands"] = sorted(merged["bands"])
             broadcast({"type": "spectrum", "data": dict(merged, bands=report["spectra"])})
 
+        record_power(sensor_id, report)
         entries = log_signals(sensor_id, report)
         if entries:
             broadcast({"type": "signals", "data": [{k: v for k, v in e.items() if k != "t"} for e in entries]})
@@ -604,6 +707,19 @@ def api_baseline():
                                           for sid, s_ in sensors.items()}}
 
 
+@app.get("/api/power")
+def api_power(band: str = "2.4GHz"):
+    with lock:
+        return {"success": True, "data": power_table(band)}
+
+
+@app.get("/api/thresholds")
+def api_thresholds():
+    bands = sorted({b for s_ in sensors.values() for b in s_.get("bands", [])}) or list(rf.BANDS)
+    return {"success": True, "data": {"defaults": rf.DEFAULT_THRESHOLDS, "bands": rf.thresholds_table(bands),
+                                      "file": os.path.basename(rf.THRESHOLDS_FILE)}}
+
+
 @app.get("/api/tracks")
 def api_tracks():
     with lock:
@@ -675,8 +791,9 @@ def parse_args():
                     help="bands to sweep: 868 2.4 5.2 5.8 (default) or 5.8wide (5.645-5.925GHz)")
     rf.add_sdr_args(ap)
     site_baseline.add_args(ap)
-    ap.add_argument("--learn-sweeps", type=int, default=20,
-                    help="sweeps spent learning the background at startup, drones off (default 20, ~25s)")
+    ap.add_argument("--learn-sweeps", type=int, default=10,
+                    help="minimum sweeps of startup background learning (it also lasts at least learn_s = 30 s; "
+                         "change that per band in thresholds.json)")
     ap.add_argument("--port", type=int, default=8000)
     return ap.parse_args()
 
@@ -687,6 +804,8 @@ if __name__ == "__main__":
     threading.Thread(target=run_ws_server, daemon=True).start()
     threading.Thread(target=housekeeping_loop, daemon=True).start()
 
+    if rf.load_thresholds():
+        print(f"Using band thresholds from {os.path.basename(rf.THRESHOLDS_FILE)}")
     receiver = None
     if not args.no_local_sensor:
         from detector_pipeline import DetectorPipeline
@@ -714,7 +833,7 @@ if __name__ == "__main__":
         if signatures:
             print(f"Loaded {len(signatures)} calibrated signature(s): " + ", ".join(s_["name"] for s_ in signatures))
         if pipeline.learning:
-            print(f"Learning the background for the first {args.learn_sweeps} sweeps - keep drones switched OFF "
+            print(f"Learning the background for the first {rf.thr(None, 'learn_s'):.0f} s - keep drones switched OFF "
                   f"until it says 'Background learned'.")
     else:
         print("No local SDR - waiting for sensor_node.py reports.")

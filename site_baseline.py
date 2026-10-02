@@ -69,7 +69,7 @@ class BandBaseline:
             if 0 <= i < self.nbins:
                 self.bw_sum[i] += c["bandwidth_mhz"]
                 self.bw_n[i] += 1
-            if rf.wide_strong([c]):
+            if rf.wide_strong([c], self.band):
                 j = int((c["peak_mhz"] * 1e6 - self.lo_hz) // BIN_HZ)
                 if 0 <= j < self.nbins:
                     peaks.add(j)

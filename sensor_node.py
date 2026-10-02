@@ -46,10 +46,12 @@ def main():
                     help="bands to sweep: 868 2.4 5.2 5.8 (default) or 5.8wide (5.645-5.925GHz)")
     rf.add_sdr_args(ap)
     site_baseline.add_args(ap)
-    ap.add_argument("--learn-sweeps", type=int, default=20,
-                    help="sweeps spent learning the background at startup, drones off (default 20)")
+    ap.add_argument("--learn-sweeps", type=int, default=10,
+                    help="minimum sweeps of startup learning (it also lasts at least 30 s - see thresholds.json)")
     args = ap.parse_args()
 
+    if rf.load_thresholds():
+        print(f"[{args.id}] Using band thresholds from thresholds.json")
     url = f"{args.server.rstrip('/')}/api/sensors/{args.id}/report"
     bands = rf.bands_from_args(args.bands)
     print(f"[{args.id}] Connecting to {args.sdr}...")
@@ -57,7 +59,7 @@ def main():
     baseline, minutes = site_baseline.from_args(args, args.id, bands)
     pipeline = DetectorPipeline(receiver, bands, rf.load_signatures(), args.learn_sweeps,
                                 band_reps=rf.band_reps_from_args(args), baseline=baseline, baseline_minutes=minutes)
-    print(f"[{args.id}] Reporting to {url}. Learning background for {args.learn_sweeps} sweeps - keep drones OFF.")
+    print(f"[{args.id}] Reporting to {url}. Learning background for {rf.thr(None, 'learn_s'):.0f} s - keep drones OFF.")
 
     failures = 0
     try:
