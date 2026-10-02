@@ -29,7 +29,7 @@ batches). Use a powered USB hub or the Pi's own USB 3 port for the HackRF.
 ```
 sudo apt install hackrf python3-numpy
 pip install python_hackrf --break-system-packages
-# copy rf_detector.py, detector_pipeline.py, control_link.py, sensor_node.py
+# copy rf_detector.py, detector_pipeline.py, control_link.py, site_baseline.py, sensor_node.py
 # (and drone_signatures.json if you calibrated) onto the Pi
 python3 sensor_node.py --id north-wall --lat 51.50720 --lon -0.12760 \
                        --server http://192.168.1.50:8000
