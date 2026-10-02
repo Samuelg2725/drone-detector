@@ -50,7 +50,7 @@ FRAME = 32768                 # samples per read
 DATASET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets")
 
 
-def record(uri, mhz, gain, seconds):
+def record(uri, mhz, gain, frames_n):
     if adi is None:
         raise SystemExit("pyadi-iio is not installed. Run:  pip install pyadi-iio --break-system-packages")
     print(f"Connecting to Pluto at {uri} ...")
@@ -66,10 +66,9 @@ def record(uri, mhz, gain, seconds):
     except Exception:
         pass
     sdr.rx()                                   # throw away the first (stale) buffer
-    frames, end = [], time.time() + seconds
-    print(f"Recording {seconds}s at {mhz:.1f} MHz ...")
-    while time.time() < end:
-        frames.append(np.asarray(sdr.rx(), dtype=np.complex64))
+    secs = frames_n * FRAME / RATE_HZ
+    print(f"Recording {frames_n} frames (~{secs:.2f}s of air) at {mhz:.1f} MHz ...")
+    frames = [np.asarray(sdr.rx(), dtype=np.complex64) for _ in range(frames_n)]
     del sdr
     return np.concatenate(frames)
 
@@ -81,11 +80,11 @@ def main():
     ap.add_argument("--mhz", type=float, required=True, help="centre frequency to listen at, in MHz")
     ap.add_argument("--pluto-uri", default="ip:192.168.2.1", help="which Pluto to use")
     ap.add_argument("--gain", type=int, default=40, help="Pluto RX gain 0-70 dB (default 40 - same for every clip!)")
-    ap.add_argument("--seconds", type=float, default=10.0, help="how long to record (default 10)")
+    ap.add_argument("--frames", type=int, default=200, help="how many 32768-sample frames to grab (default 200 ~= 0.33s of air, ~52 MB)")
     ap.add_argument("--note", default="", help="free-text note, e.g. 'drone 3m away, office'")
     args = ap.parse_args()
 
-    iq = record(args.pluto_uri, args.mhz, args.gain, args.seconds)
+    iq = record(args.pluto_uri, args.mhz, args.gain, args.frames)
 
     folder = os.path.join(DATASET_DIR, args.label)
     os.makedirs(folder, exist_ok=True)
