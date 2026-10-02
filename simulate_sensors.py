@@ -121,7 +121,7 @@ def online(args):
     path = drone_path(args.size_m, args.steps)
     base = args.server.rstrip("/")
     print(f"Simulating {len(S)} sensors ({args.layout}, {args.size_m:.0f}m site) -> {base}")
-    errs = []
+    errs, covered, side_ok = [], [], []
     for step, (dx, dy) in enumerate(path):
         lv = levels_at((dx, dy), S, args.level_at_1m, args.true_exponent, args.wobble_db, offsets, rng)
         for sid, (lat, lon), level in zip(ids, latlons, lv):
@@ -141,18 +141,32 @@ def online(args):
         time.sleep(args.interval)
         tracks = [t for t in get_json(f"{base}/api/tracks")["data"]["items"] if t["status"] == "active"]
         heard = sum(level >= DETECT_THRESHOLD_DB for level in lv)
-        if tracks and tracks[0].get("position"):
-            p = tracks[0]["position"]
+        t = tracks[0] if tracks else None
+        p = t.get("position") if t else None
+        inside_true = abs(dx) <= args.size_m / 2 and abs(dy) <= args.size_m / 2
+        if p and p["method"].startswith("single-sensor"):
+            print(f"step {step + 1:3d}: drone at ({dx:6.0f},{dy:6.0f})m, heard by {heard} sensor(s) - only "
+                  f"{t['nearest_sensor']} hears it: position unknown")
+        elif p and p["method"].startswith("outside-perimeter"):
+            print(f"step {step + 1:3d}: drone at ({dx:6.0f},{dy:6.0f})m, heard by {heard} sensor(s) - "
+                  f"OUTSIDE perimeter to the {p['bearing']} (really {'inside' if inside_true else 'outside'}), "
+                  f"nearest {t['nearest_sensor']}, {t['trend']}")
+        elif p:
             ex, ey = L.to_local(p["lat"], p["lon"], args.lat, args.lon)
             err = math.hypot(ex - dx, ey - dy)
             errs.append(err)
+            covered.append(err <= (p["uncertainty_m"] or 0))
+            side_ok.append(p.get("inside_perimeter") == inside_true)
             print(f"step {step + 1:3d}: drone at ({dx:6.0f},{dy:6.0f})m, heard by {heard} sensor(s), "
-                  f"estimate ({ex:6.0f},{ey:6.0f})m via {p['method']}, error {err:5.0f}m "
-                  f"(±{p['uncertainty_m']:.0f}m), nearest {tracks[0]['nearest_sensor']}")
+                  f"estimate ({ex:6.0f},{ey:6.0f})m, error {err:5.0f}m (±{p['uncertainty_m']:.0f}m), "
+                  f"{'inside' if p.get('inside_perimeter') else 'OUTSIDE'} {p['bearing']}, "
+                  f"nearest {t['nearest_sensor']}, {t['trend']}")
         else:
             print(f"step {step + 1:3d}: drone at ({dx:6.0f},{dy:6.0f})m, heard by {heard} sensor(s) - no estimate")
     if errs:
         print(f"\nPosition error over the flight: median {np.median(errs):.0f}m, 90% within {np.percentile(errs, 90):.0f}m")
+        print(f"True position inside the reported ± circle: {np.mean(covered):.0%} of fixes")
+        print(f"Inside/outside the perimeter called correctly: {np.mean(side_ok):.0%} of fixes")
 
 
 def main():

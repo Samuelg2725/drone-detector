@@ -30,6 +30,7 @@ import time
 import uuid
 from collections import deque
 
+import numpy as np
 import uvicorn
 import websockets
 from fastapi import FastAPI, Request
@@ -229,15 +230,63 @@ def public(det):
     out["status"] = "active" if is_active(det, now) else "gone"
     out["duration_s"] = int(det["_last_seen"] - det["_first_seen"])
     out["seen_ago_s"] = int(now - det["_last_seen"])
-    levels = sensor_levels(det, now) if out["status"] == "active" else det.get("_last_levels", [])
+    levels = det.get("_last_levels", [])
     out["sensor_levels"] = levels
-    if out["status"] == "active":
-        det["_last_levels"] = levels
-        det["_position"] = localization.locate(levels) if levels else None
-    out["position"] = det.get("_position")
+    pos = det.get("_position")
+    if pos:
+        pos = {k: v for k, v in pos.items() if k != "candidates"}
+    out["position"] = pos
     out["nearest_sensor"] = levels[0]["sensor_id"] if levels else None
     out["estimated_distance_m"] = levels[0]["estimated_distance_m"] if levels else None
+    out["trend"] = det.get("_trend", "steady")
+    out["trend_db_per_s"] = det.get("_trend_rate")
     return out
+
+
+# Level trend (the "RSSI rises then falls" sign): slope of the loudest
+# sensor's level over the last TREND_WINDOW_S.
+TREND_WINDOW_S = 10.0
+TREND_DB_PER_S = 0.8
+
+
+def update_positions():
+    """Once a second for every active track: per-sensor levels -> position
+    fix -> tracker (speed-limited, ambiguity resolved by history) ->
+    inside/outside the perimeter; plus the approaching/moving-away trend."""
+    now = time.time()
+    perimeter = [(s["lat"], s["lon"]) for s in sensors.values() if s.get("lat") is not None]
+    for d in detections:
+        if not is_active(d, now):
+            continue
+        levels = sensor_levels(d, now)
+        if levels:
+            d["_last_levels"] = levels
+        hearing = {lv["sensor_id"] for lv in levels}
+        silent = [(s["lat"], s["lon"]) for s in sensors.values()
+                  if s.get("lat") is not None and s["sensor_id"] not in hearing
+                  and now - s["last_report"] < SENSOR_STALE_S and not s.get("learning")
+                  and (not s.get("bands") or d["band"] in s["bands"])]
+        fix = localization.locate(levels, perimeter=perimeter, silent=silent) if levels else None
+        tracker = d.setdefault("_tracker", localization.PositionTrack())
+        pos = tracker.update(fix, now)
+        if pos and pos["method"].endswith("+tracked"):
+            res = localization.inside_perimeter(pos["lat"], pos["lon"], perimeter)
+            if res:
+                pos["inside_perimeter"], pos["bearing"] = res
+        if pos:
+            d["_position"] = pos
+
+        hist = d.setdefault("_level_hist", deque(maxlen=30))
+        if levels:
+            hist.append((now, levels[0]["level_db"]))
+        pts = [(t, lv) for t, lv in hist if now - t <= TREND_WINDOW_S]
+        if len(pts) >= 5 and pts[-1][0] - pts[0][0] >= 4:
+            rate = float(np.polyfit([t - pts[0][0] for t, _ in pts], [lv for _, lv in pts], 1)[0])
+            d["_trend_rate"] = round(rate, 2)
+            # Relative to the loudest sensor, not the site - so "rising" means
+            # getting closer to whichever sensor hears it best.
+            d["_trend"] = ("signal rising" if rate > TREND_DB_PER_S else
+                           "signal falling" if rate < -TREND_DB_PER_S else "steady")
 
 
 def end_lost_tracks():
@@ -336,6 +385,7 @@ def housekeeping_loop():
         try:
             with lock:
                 end_lost_tracks()
+                update_positions()
                 broadcast({"type": "tracks", "data": current_tracks()})
                 broadcast({"type": "metrics", "data": current_metrics()})
                 broadcast({"type": "sensors", "data": all_sensors()})
@@ -491,8 +541,8 @@ def parse_args():
     ap.add_argument("--sensor-id", default="local", help="name of the local HackRF sensor (default 'local')")
     ap.add_argument("--lat", type=float, help="local sensor latitude (or click the dashboard map)")
     ap.add_argument("--lon", type=float, help="local sensor longitude")
-    ap.add_argument("--bands", nargs="+", choices=["2.4", "5.8"], default=["2.4", "5.8"],
-                    help="bands the local sensor sweeps (default: both)")
+    ap.add_argument("--bands", nargs="+", choices=list(rf.BAND_ARGS), default=rf.DEFAULT_BAND_ARGS,
+                    help="bands to sweep: 868 2.4 5.2 5.8 (default) or 5.8wide (5.645-5.925GHz)")
     ap.add_argument("--lna", type=int, default=16, help="LNA gain 0-40 dB, steps of 8 (default 16)")
     ap.add_argument("--vga", type=int, default=20, help="VGA gain 0-62 dB, steps of 2 (default 20)")
     ap.add_argument("--learn-sweeps", type=int, default=20,
@@ -521,7 +571,7 @@ if __name__ == "__main__":
         except Exception:
             pass  # optional extra - modulation hints only
         signatures = rf.load_signatures()
-        bands = [b + "GHz" for b in args.bands]
+        bands = rf.bands_from_args(args.bands)
         print("Connecting to HackRF...")
         receiver = rf.HackRFReceiver.open(pyhackrf, lna_gain=args.lna, vga_gain=args.vga, amp=args.amp)
         pipeline = DetectorPipeline(receiver, bands, signatures, args.learn_sweeps, analyzer)

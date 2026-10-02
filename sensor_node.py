@@ -13,7 +13,7 @@ Needs only: numpy, python_hackrf (no web server on the Pi).
 Usage:
     python3 sensor_node.py --id north-wall --lat 51.50720 --lon -0.12760 \\
                            --server http://192.168.1.50:8000
-Copy rf_detector.py, detector_pipeline.py and (optionally)
+Copy rf_detector.py, detector_pipeline.py, control_link.py and (optionally)
 drone_signatures.json onto the Pi next to this file.
 """
 import argparse
@@ -39,7 +39,8 @@ def main():
     ap.add_argument("--lat", type=float, help="sensor latitude (or set it later by clicking the dashboard map)")
     ap.add_argument("--lon", type=float, help="sensor longitude")
     ap.add_argument("--server", required=True, help="central server URL, e.g. http://192.168.1.50:8000")
-    ap.add_argument("--bands", nargs="+", choices=["2.4", "5.8"], default=["2.4", "5.8"])
+    ap.add_argument("--bands", nargs="+", choices=list(rf.BAND_ARGS), default=rf.DEFAULT_BAND_ARGS,
+                    help="bands to sweep: 868 2.4 5.2 5.8 (default) or 5.8wide (5.645-5.925GHz)")
     ap.add_argument("--lna", type=int, default=16)
     ap.add_argument("--vga", type=int, default=20)
     ap.add_argument("--amp", action="store_true")
@@ -49,7 +50,7 @@ def main():
 
     from python_hackrf import pyhackrf
     url = f"{args.server.rstrip('/')}/api/sensors/{args.id}/report"
-    bands = [b + "GHz" for b in args.bands]
+    bands = rf.bands_from_args(args.bands)
     print(f"[{args.id}] Connecting to HackRF...")
     receiver = rf.HackRFReceiver.open(pyhackrf, lna_gain=args.lna, vga_gain=args.vga, amp=args.amp)
     pipeline = DetectorPipeline(receiver, bands, rf.load_signatures(), args.learn_sweeps)

@@ -35,6 +35,7 @@ SAMPLE_RATE_HZ = 20_000_000
 FFT_SIZE = 1024                      # 19.53125kHz bins at 20MS/s
 BIN_HZ = SAMPLE_RATE_HZ / FFT_SIZE
 NUM_SAMPLES = 2 ** 17                # per hop: ~6.5ms -> 128 averaged FFTs
+MAX_CAPTURE_SAMPLES = 2 ** 19        # longest single capture (868MHz control-link dwell)
 BASEBAND_FILTER_HZ = 15_000_000      # passband ~ +/-7.5MHz
 
 # Keep 716 bins (~13.98MHz) of every hop: +/-358 bins around DC. Hop step
@@ -49,12 +50,35 @@ SETTLE_SAMPLES = 2 ** 19
 
 DC_EXCLUSION_HZ = 50_000
 
-# Frequency ranges swept, in Hz. 5.8GHz covers every common analog/digital
-# FPV video channel (bands A/B/E/F/R and DJI's 5.725-5.850 range).
+# Frequency ranges swept, in Hz.
+#   868MHz  - EU/UK long-range control links (ExpressLRS, TBS Crossfire),
+#             the usual radio control link on FPV drones in the UK
+#   2.4GHz  - toy/consumer drone video + control, ExpressLRS 2.4, DJI
+#   5.2GHz  - 5.165-5.255GHz, used by DJI's newer video links
+#   5.8GHz  - 5.72-5.855GHz, most FPV video (analog and digital)
+#   5.8GHz-wide - 5.645-5.925GHz: also catches analog FPV set to channels
+#             outside 5.72-5.855 (e.g. Raceband 5658/5695/5880/5917MHz)
 BANDS = {
+    "868MHz": (860_000_000, 872_000_000),
     "2.4GHz": (2_400_000_000, 2_485_000_000),
-    "5.8GHz": (5_645_000_000, 5_925_000_000),
+    "5.2GHz": (5_165_000_000, 5_255_000_000),
+    "5.8GHz": (5_720_000_000, 5_855_000_000),
+    "5.8GHz-wide": (5_645_000_000, 5_925_000_000),
 }
+BAND_ARGS = {"868": "868MHz", "2.4": "2.4GHz", "5.2": "5.2GHz", "5.8": "5.8GHz", "5.8wide": "5.8GHz-wide"}
+DEFAULT_BAND_ARGS = ["868", "2.4", "5.2", "5.8"]
+
+
+def bands_from_args(codes):
+    bands = [BAND_ARGS[c] for c in codes]
+    if "5.8GHz" in bands and "5.8GHz-wide" in bands:
+        bands.remove("5.8GHz")   # the wide range already contains it
+    return bands
+
+
+def is_5ghz(band):
+    return band.startswith("5.")
+
 
 # Bins this far above the local noise floor count as "occupied".
 OCCUPIED_DB = 6.0
@@ -79,6 +103,7 @@ SIGNATURES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dron
 # Standard WiFi channel centres (20MHz channels). A cluster centred within
 # 3MHz of one is more likely WiFi than a drone - corroborating, not proof.
 WIFI_CHANNELS_MHZ = [2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, 2467, 2472, 2484,
+                     5180, 5200, 5220, 5240,
                      5745, 5765, 5785, 5805, 5825, 5845, 5865, 5885]
 WIFI_CHANNEL_TOLERANCE_MHZ = 3.0
 
@@ -113,7 +138,8 @@ class HackRFReceiver:
     def __init__(self, sdr, lna_gain=16, vga_gain=20, amp=False):
         self.sdr = sdr
         self.lock = threading.Lock()
-        self.buf = np.zeros(NUM_SAMPLES, dtype=np.complex64)
+        self.buf = np.zeros(MAX_CAPTURE_SAMPLES, dtype=np.complex64)
+        self.want = NUM_SAMPLES
         self.idx = 0
         self.skip = 0
         self.active = False
@@ -147,10 +173,10 @@ class HackRFReceiver:
                 drop = min(self.skip, len(iq))
                 self.skip -= drop
                 iq = iq[drop:]
-            to_copy = min(len(iq), NUM_SAMPLES - self.idx)
+            to_copy = min(len(iq), self.want - self.idx)
             self.buf[self.idx:self.idx + to_copy] = iq[:to_copy]
             self.idx += to_copy
-            if self.idx >= NUM_SAMPLES:
+            if self.idx >= self.want:
                 self.active = False
         return 0
 
@@ -176,17 +202,19 @@ class HackRFReceiver:
         except Exception:
             pass
 
-    def capture(self, center_hz):
-        """Retune, discard the settling samples, return NUM_SAMPLES IQ."""
+    def capture(self, center_hz, num_samples=NUM_SAMPLES):
+        """Retune, discard the settling samples, return num_samples IQ."""
+        num_samples = min(num_samples, MAX_CAPTURE_SAMPLES)
         with self.lock:
             self.active = False
         self.sdr.pyhackrf_set_freq(int(center_hz))
         with self.lock:
+            self.want = num_samples
             self.idx = 0
             self.skip = SETTLE_SAMPLES
             self.active = True
 
-        timeout = (NUM_SAMPLES + SETTLE_SAMPLES) / SAMPLE_RATE_HZ + 1.0
+        timeout = (num_samples + SETTLE_SAMPLES) / SAMPLE_RATE_HZ + 1.0
         start = time.time()
         while self.active and (time.time() - start) < timeout:
             time.sleep(0.002)
@@ -196,11 +224,11 @@ class HackRFReceiver:
             got = self.idx
             samples = self.buf[:got].copy()
 
-        if got < NUM_SAMPLES // 2:
+        if got < num_samples // 2:
             # Never FFT a mostly-empty buffer - surface it as a real error.
             if time.time() - self.last_callback > 2.0:
                 self.restart()
-            raise RuntimeError(f"HackRF delivered only {got}/{NUM_SAMPLES} samples at "
+            raise RuntimeError(f"HackRF delivered only {got}/{num_samples} samples at "
                                f"{center_hz / 1e6:.1f}MHz in {timeout:.1f}s")
         return samples
 
@@ -387,7 +415,7 @@ def classify_cluster(cluster, band, signatures=()):
     bw = cluster["bandwidth_mhz"]
     if cf >= 7.0 and edge >= 10.0 and bw >= ANALOG_MIN_BANDWIDTH_MHZ:
         conf = min(0.95, 0.5 + (cf - 7.0) / 20.0 + (edge - 10.0) / 40.0)
-        label = "Analog FPV video link" if band == "5.8GHz" else "Analog video link"
+        label = "Analog FPV video link" if is_5ghz(band) else "Analog video link"
         return label + " (shape match)", round(conf, 3), "shape", None, None
     if cf < 5.0 and edge < 8.0 and 10.0 <= bw <= 40.0:
         conf = min(0.90, 0.5 + (5.0 - cf) / 20.0 + (8.0 - edge) / 40.0)
@@ -559,7 +587,7 @@ def detections_for_band(result, signatures=(), modulation_analyzer=None):
         if wifi_ch is not None and method == "shape":
             conf = round(conf * 0.5, 3)
         fpv_ch = nearest_channel(c["center_mhz"], FPV_CHANNELS_MHZ, FPV_CHANNEL_TOLERANCE_MHZ) \
-            if result["band"] == "5.8GHz" else None
+            if is_5ghz(result["band"]) else None
 
         modulation_hint = None
         if modulation_analyzer is not None and result.get("hops"):

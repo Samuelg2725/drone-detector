@@ -16,6 +16,9 @@ Per band it keeps:
 """
 import time
 
+import numpy as np
+
+import control_link
 import rf_detector as rf
 
 # Shape-rule matches below this confidence are mostly WiFi (they're
@@ -33,6 +36,7 @@ class BandState:
         self.hop = rf.HopDetector(self.background)
         self.trackers = {}
         self.learn_sweeps = learn_sweeps
+        self.control = control_link.ControlLinkDetector()
         self.link_span = None        # (lo_mhz, hi_mhz) of the last hopping link
         self.link_span_ttl = 0       # sweeps left before that span is forgotten
 
@@ -129,10 +133,15 @@ class DetectorPipeline:
         t0 = time.time()
         spectra, found = {}, []
         for band in self.bands:
+            st = self.states[band]
+            if band == control_link.CONTROL_BAND:
+                spectra[band], det = self.control_band(band, st)
+                if det:
+                    found.append(det)
+                continue
             result = rf.sweep_band(self.receiver, band)
             spectra[band] = rf.spectrum_summary(result)
             dets, clusters = rf.detections_for_band(result, self.signatures, self.analyzer)
-            st = self.states[band]
             found.extend(fuse_band(band, dets, clusters, st, self.signatures))
             spectra[band]["background"] = {
                 "learning": st.learning,
@@ -140,6 +149,7 @@ class DetectorPipeline:
                 "learn_sweeps": st.learn_sweeps,
                 "busy_channels_mhz": st.background.busy_channels_mhz(),
             }
+        correlate(found)
         for det in found:
             sig = next((x for x in self.signatures if x["name"] == det.get("signature")), None)
             det["estimated_distance_m"] = rf.estimate_distance_m(det["above_noise_db"], sig)
@@ -152,3 +162,66 @@ class DetectorPipeline:
             "spectra": spectra,
             "detections": found,
         }
+
+    def control_band(self, band, st):
+        """868MHz: one long capture -> display spectrum + packet analysis."""
+        lo, hi = rf.BANDS[band]
+        center = (lo + hi) // 2
+        samples = self.receiver.capture(center, control_link.CONTROL_SAMPLES)
+        f, db = rf.hop_spectrum(samples, center)
+        result = rf.build_band_result(band, [f], [db], [float(np.percentile(db, 20))], [])
+        summary = rf.spectrum_summary(result)
+        packets = control_link.find_packets(samples, center)
+        link = st.control.update(packets)
+        st.background.sweeps += 1          # 868MHz learning period just counts sweeps
+        summary["background"] = {"learning": st.learning, "sweeps": min(st.background.sweeps, st.learn_sweeps),
+                                 "learn_sweeps": st.learn_sweeps, "busy_channels_mhz": []}
+        summary["packets"] = len(packets)
+        if not link or st.learning:
+            return summary, None
+        conf = 0.8
+        det = {
+            "band": band,
+            "drone_type": f"FHSS control link ({band}) - ExpressLRS/Crossfire-like",
+            "method": "control-link",
+            "signature": None,
+            "channel_mhz": None,
+            "confidence": conf,
+            "threat_level": rf.threat_level(conf),
+            "frequency_mhz": link["center_mhz"],
+            "power_db": link["level_db"],
+            "above_noise_db": link["level_db"],
+            "bandwidth_mhz": link["span_mhz"],
+            "crest_factor_db": None,
+            "edge_drop_db": None,
+            "wifi_channel_aligned": False,
+            "wifi_channel_mhz": None,
+            "fpv_channel_mhz": None,
+            "modulation_hint": None,
+            "channels_seen": link["channels_mhz"],
+            "packets_per_sweep": link["packets_per_sweep"],
+            "track_key": f"control:{band}",
+        }
+        return summary, det
+
+
+VIDEO_METHODS = {"hopping", "calibrated", "shape"}
+
+
+def correlate(found):
+    """A control link and a video link at the same time from the same
+    sensor is the strongest sign of an FPV drone (the boss's 'activity
+    correlates with 2.4/5.8GHz' row): mark both and raise confidence."""
+    control = [d for d in found if d["method"] == "control-link"]
+    video = [d for d in found if d["method"] in VIDEO_METHODS and d["confidence"] >= 0.6]
+    if not control or not video:
+        return
+    for d in control + video:
+        d["correlated"] = True
+        d["confidence"] = max(d["confidence"], 0.92)
+        d["threat_level"] = rf.threat_level(d["confidence"])
+    for d in control:
+        d["drone_type"] += " + video link active: likely FPV drone"
+    for d in video:
+        d["drone_type"] += " + control link active"
+

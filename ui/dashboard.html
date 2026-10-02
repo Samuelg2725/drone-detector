@@ -887,6 +887,11 @@
                                 html: '<div style="background:#ff4444;color:#fff;font-weight:800;font-size:11px;border:2px solid #fff;border-radius:6px;text-align:center;line-height:18px;box-shadow:0 0 10px #ff4444;">DRONE</div>'})})
                             .bindTooltip(`${t.drone_type}<br>Estimated position ±${Math.round(p.uncertainty_m)} m (${p.method}, ${p.sensors_used} sensors)<br>Nearest sensor: ${t.nearest_sensor}`)
                             .addTo(m));
+                    } else if (p && p.method.startsWith('outside-perimeter')) {
+                        droneLayers.push(L.marker([p.lat, p.lon], {pane: 'dronePane', icon: L.divIcon({className: '',
+                                iconSize: [150, 22], iconAnchor: [75, 11],
+                                html: `<div style="background:#ffb74d;color:#000;font-weight:800;font-size:11px;border:2px solid #fff;border-radius:6px;text-align:center;line-height:18px;">DRONE OUTSIDE → ${p.bearing}</div>`})})
+                            .bindTooltip(`${t.drone_type}<br>Outside the perimeter to the ${p.bearing}; too far out to place precisely`).addTo(m));
                     } else if (p && t.estimated_distance_m) {
                         droneLayers.push(L.circle([p.lat, p.lon], {radius: t.estimated_distance_m, color: '#ff4444', weight: 2,
                             dashArray: '6 6', fillOpacity: 0.05})
@@ -1343,6 +1348,18 @@
             return `${Math.floor(s / 60)}m ${s % 60}s`;
         }
 
+        function positionText(t) {
+            const p = t.position;
+            if (!p) return '';
+            if (p.method.startsWith('single-sensor'))
+                return t.estimated_distance_m ? ` · only 1 sensor hears it: ~${t.estimated_distance_m} m from it, direction unknown` : ' · only 1 sensor hears it';
+            if (p.method.startsWith('outside-perimeter'))
+                return ` · <b style="color:#ffb74d">OUTSIDE the perimeter, to the ${p.bearing}</b> (too far out to place)`;
+            const side = p.inside_perimeter === true ? '<b style="color:#ff4444">INSIDE the perimeter</b>'
+                       : p.inside_perimeter === false ? `<b style="color:#ffb74d">outside the perimeter (${p.bearing})</b>` : '';
+            return ` · ${side} · position ±${Math.round(p.uncertainty_m)} m from ${p.sensors_used} sensors`;
+        }
+
         let lastTracks = [];
         function updateTracks(tracks) {
             lastTracks = tracks || [];
@@ -1364,9 +1381,8 @@
                                     ? `active for ${formatAgo(t.duration_s)} · last seen ${t.seen_ago_s}s ago`
                                     : `was active ${formatAgo(t.duration_s)} · gone since ${new Date(t.last_seen).toLocaleTimeString()}`}
                                 ${t.nearest_sensor ? ` · nearest sensor <b>${t.nearest_sensor}</b>` : ''}
-                                ${t.position && t.position.method !== 'single-sensor'
-                                    ? ` · position ±${Math.round(t.position.uncertainty_m)} m from ${t.position.sensors_used} sensors`
-                                    : (t.estimated_distance_m ? ` · ~${t.estimated_distance_m} m from it (rough, 1 sensor)` : '')}
+                                ${positionText(t)}
+                                ${t.trend && t.trend !== 'steady' ? ` · <b>${t.trend}</b>` : ''}
                                 ${(t.sensor_levels || []).length ? `<br>Power at each sensor: ` + t.sensor_levels.map(l => `${l.sensor_id} +${l.level_db} dB`).join(' · ') : ''}
                                 ${t.channels_seen ? ` · channels ${t.channels_seen.map(c => Math.round(c)).join(', ')}` : ''}
                             </div>

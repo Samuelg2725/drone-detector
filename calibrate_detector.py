@@ -279,7 +279,10 @@ def save_signatures(new_sigs, name):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--name", default="My drone", help="name for the learned signature(s)")
-    ap.add_argument("--bands", nargs="+", choices=["2.4", "5.8"], default=["2.4", "5.8"])
+    ap.add_argument("--bands", nargs="+", choices=[b for b in rf.BAND_ARGS if b != "868"],
+                    default=[b for b in rf.DEFAULT_BAND_ARGS if b != "868"],
+                    help="video bands to learn: 2.4 5.2 5.8 (default) or 5.8wide. (868MHz control links "
+                         "hop too fast to learn this way - control_link.py detects them without calibration.)")
     ap.add_argument("--seconds", type=int, default=45, help="recording time per phase (default 45)")
     ap.add_argument("--any-frequency", action="store_true",
                     help="match the learned shape anywhere in the band (use if your drone changes channel)")
@@ -300,7 +303,7 @@ def main():
             session = json.load(fh)
     else:
         from python_hackrf import pyhackrf
-        bands = [b + "GHz" for b in args.bands]
+        bands = rf.bands_from_args(args.bands)
         print("Connecting to HackRF... (make sure drone_dashboard_backend.py is NOT running)")
         receiver = rf.HackRFReceiver.open(pyhackrf, lna_gain=args.lna, vga_gain=args.vga, amp=args.amp)
         try:
