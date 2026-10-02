@@ -1,0 +1,1716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Drone Detection System - Settings</title>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Custom CSS -->
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #0a0a1a 0%, #0f0f1f 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+
+        /* Layout */
+        .app-container {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 280px;
+            background: linear-gradient(180deg, #0f0f1f 0%, #0a0a1a 100%);
+            border-right: 1px solid rgba(100, 100, 150, 0.2);
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+            z-index: 100;
+        }
+
+        .logo {
+            padding: 28px 24px;
+            border-bottom: 1px solid rgba(100, 100, 150, 0.2);
+        }
+
+        .logo h1 {
+            font-size: 22px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .logo p {
+            font-size: 12px;
+            color: #666;
+            margin-top: 6px;
+        }
+
+        .nav-menu {
+            padding: 24px 16px;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            border-radius: 12px;
+            color: #888;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .nav-item:hover {
+            background: rgba(79, 172, 254, 0.1);
+            color: #4facfe;
+        }
+
+        .nav-item.active {
+            background: linear-gradient(135deg, rgba(79, 172, 254, 0.2), rgba(0, 242, 254, 0.1));
+            color: #4facfe;
+            border-left: 3px solid #4facfe;
+        }
+
+        .nav-item i {
+            width: 24px;
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            margin-left: 280px;
+            padding: 24px 32px;
+        }
+
+        /* Top Bar */
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 32px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid rgba(100, 100, 150, 0.2);
+        }
+
+        .page-title {
+            font-size: 28px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #fff 0%, #aaa 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: rgba(0, 242, 254, 0.1);
+            border-radius: 20px;
+            font-size: 14px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #4caf50;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Settings Container */
+        .settings-container {
+            max-width: 1000px;
+        }
+
+        .settings-section {
+            background: rgba(20, 20, 40, 0.6);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            border: 1px solid rgba(100, 100, 150, 0.2);
+            margin-bottom: 24px;
+            overflow: hidden;
+        }
+
+        .section-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid rgba(100, 100, 150, 0.2);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .section-header i {
+            font-size: 24px;
+            color: #4facfe;
+        }
+
+        .section-header h2 {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .section-header p {
+            font-size: 13px;
+            color: #888;
+            margin-top: 4px;
+        }
+
+        .section-content {
+            padding: 24px;
+        }
+
+        /* Form Groups */
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            color: #ccc;
+        }
+
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%;
+            padding: 10px 12px;
+            background: rgba(10, 10, 26, 0.6);
+            border: 1px solid rgba(100, 100, 150, 0.3);
+            border-radius: 8px;
+            color: #e0e0e0;
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: #4facfe;
+            box-shadow: 0 0 0 2px rgba(79, 172, 254, 0.2);
+        }
+
+        .form-group input[type="range"] {
+            padding: 0;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+
+        /* Toggle Switch */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 24px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(100, 100, 150, 0.3);
+            transition: 0.3s;
+            border-radius: 24px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        input:checked + .toggle-slider {
+            background: linear-gradient(135deg, #4facfe, #00f2fe);
+        }
+
+        input:checked + .toggle-slider:before {
+            transform: translateX(26px);
+        }
+
+        .toggle-label {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s;
+            border: none;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #4facfe, #00f2fe);
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(79, 172, 254, 0.3);
+        }
+
+        .btn-secondary {
+            background: rgba(79, 172, 254, 0.2);
+            border: 1px solid rgba(79, 172, 254, 0.3);
+            color: #4facfe;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(79, 172, 254, 0.3);
+        }
+
+        .btn-danger {
+            background: rgba(244, 67, 54, 0.2);
+            border: 1px solid rgba(244, 67, 54, 0.3);
+            color: #ff6b6b;
+        }
+
+        .btn-danger:hover {
+            background: rgba(244, 67, 54, 0.3);
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+
+        /* Frequency Band List */
+        .band-list {
+            margin-top: 16px;
+        }
+
+        .band-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            background: rgba(79, 172, 254, 0.05);
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+
+        .band-info h4 {
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .band-info p {
+            font-size: 12px;
+            color: #888;
+        }
+
+        .band-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .band-actions button {
+            background: none;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            transition: color 0.3s;
+        }
+
+        .band-actions button:hover {
+            color: #4facfe;
+        }
+
+        /* Alert Rules List */
+        .alert-rule-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            background: rgba(79, 172, 254, 0.05);
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+
+        .rule-info h4 {
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .rule-info p {
+            font-size: 12px;
+            color: #888;
+        }
+
+        .rule-badge {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+
+        .rule-critical { background: rgba(244, 67, 54, 0.2); color: #ff6b6b; }
+        .rule-high { background: rgba(255, 152, 0, 0.2); color: #ffa726; }
+        .rule-normal { background: rgba(76, 175, 80, 0.2); color: #66bb6a; }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: linear-gradient(135deg, #0f0f1f, #0a0a1a);
+            border-radius: 20px;
+            border: 1px solid rgba(100, 100, 150, 0.2);
+            width: 90%;
+            max-width: 500px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid rgba(100, 100, 150, 0.2);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 {
+            font-size: 18px;
+        }
+
+        .modal-header i {
+            cursor: pointer;
+            color: #888;
+            transition: color 0.3s;
+        }
+
+        .modal-header i:hover {
+            color: #4facfe;
+        }
+
+        .modal-body {
+            padding: 24px;
+        }
+
+        .modal-footer {
+            padding: 20px 24px;
+            border-top: 1px solid rgba(100, 100, 150, 0.2);
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+
+        /* Toast Notification */
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(10, 10, 26, 0.95);
+            backdrop-filter: blur(10px);
+            border-left: 3px solid #4caf50;
+            padding: 12px 20px;
+            border-radius: 8px;
+            z-index: 2000;
+            animation: slideIn 0.3s ease;
+        }
+
+        .toast.error {
+            border-left-color: #f44336;
+        }
+
+        .toast.warning {
+            border-left-color: #ff9800;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        /* Loading Overlay */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            display: none;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(79, 172, 254, 0.3);
+            border-top-color: #4facfe;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar {
+                transform: translateX(-100%);
+                transition: transform 0.3s;
+            }
+            
+            .sidebar.open {
+                transform: translateX(0);
+            }
+            
+            .main-content {
+                margin-left: 0;
+                padding: 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner"></div>
+    </div>
+
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="logo">
+                <h1><i class="fas fa-cog"></i> DroneSentinel</h1>
+                <p>System Settings</p>
+            </div>
+            
+            <nav class="nav-menu">
+                <div class="nav-item active" data-section="general">
+                    <i class="fas fa-sliders-h"></i>
+                    <span>General</span>
+                </div>
+                <div class="nav-item" data-section="hardware">
+                    <i class="fas fa-microchip"></i>
+                    <span>Hardware</span>
+                </div>
+                <div class="nav-item" data-section="detection">
+                    <i class="fas fa-radar"></i>
+                    <span>Detection</span>
+                </div>
+                <div class="nav-item" data-section="alerts">
+                    <i class="fas fa-bell"></i>
+                    <span>Alerts</span>
+                </div>
+                <div class="nav-item" data-section="integrations">
+                    <i class="fas fa-plug"></i>
+                    <span>Integrations</span>
+                </div>
+                <div class="nav-item" data-section="security">
+                    <i class="fas fa-shield-alt"></i>
+                    <span>Security</span>
+                </div>
+                <div class="nav-item" data-section="advanced">
+                    <i class="fas fa-code"></i>
+                    <span>Advanced</span>
+                </div>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="top-bar">
+                <h2 class="page-title" id="pageTitle">General Settings</h2>
+                <div class="status-badge">
+                    <span class="status-dot"></span>
+                    <span id="connectionStatus">Connected</span>
+                </div>
+            </div>
+
+            <div class="settings-container" id="settingsContainer">
+                <!-- General Settings -->
+                <div id="generalSection">
+                    <div class="settings-section">
+                        <div class="section-header">
+                            <i class="fas fa-globe"></i>
+                            <div>
+                                <h2>System Preferences</h2>
+                                <p>Configure basic system settings and preferences</p>
+                            </div>
+                        </div>
+                        <div class="section-content">
+                            <div class="form-group">
+                                <label>System Name</label>
+                                <input type="text" id="systemName" placeholder="Drone Detection System">
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Language</label>
+                                    <select id="language">
+                                        <option value="en">English</option>
+                                        <option value="es">Español</option>
+                                        <option value="fr">Français</option>
+                                        <option value="de">Deutsch</option>
+                                        <option value="zh">中文</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Time Zone</label>
+                                    <select id="timezone">
+                                        <option value="UTC">UTC</option>
+                                        <option value="America/New_York">Eastern Time</option>
+                                        <option value="America/Chicago">Central Time</option>
+                                        <option value="America/Denver">Mountain Time</option>
+                                        <option value="America/Los_Angeles">Pacific Time</option>
+                                        <option value="Europe/London">GMT</option>
+                                        <option value="Europe/Berlin">CET</option>
+                                        <option value="Asia/Tokyo">JST</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="toggle-label">
+                                <span>Auto-start on system boot</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="autoStart">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="toggle-label">
+                                <span>Enable telemetry (anonymous usage data)</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="telemetry">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="section-header">
+                            <i class="fas fa-palette"></i>
+                            <div>
+                                <h2>Appearance</h2>
+                                <p>Customize the look and feel of the dashboard</p>
+                            </div>
+                        </div>
+                        <div class="section-content">
+                            <div class="form-group">
+                                <label>Theme</label>
+                                <select id="theme">
+                                    <option value="dark">Dark</option>
+                                    <option value="light">Light</option>
+                                    <option value="auto">Auto (System)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Dashboard Refresh Rate (seconds)</label>
+                                <input type="number" id="refreshRate" min="1" max="60" value="5">
+                            </div>
+                            <div class="toggle-label">
+                                <span>Show animations</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="animations" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Hardware Settings -->
+                <div id="hardwareSection" style="display: none;">
+                    <div class="settings-section">
+                        <div class="section-header">
+                            <i class="fas fa-microchip"></i>
+                            <div>
+                                <h2>SDR Configuration</h2>
+                                <p>Configure hardware device settings</p>
+                            </div>
+                        </div>
+                        <div class="section-content">
+                            <div class="form-group">
+                                <label>Device Type</label>
+                                <select id="deviceType">
+                                    <option value="hackrf">HackRF One</option>
+                                    <option value="rtlsdr">RTL-SDR</option>
+                                    <option value="pluto">ADALM-PLUTO</option>
+                                    <option value="mock">Mock (Testing)</option>
+                                </select>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Sample Rate (MHz)</label>
+                                    <input type="number" id="sampleRate" step="1" min="1" max="20" value="10">
+                                </div>
+                                <div class="form-group">
+                                    <label>LNA Gain (dB)</label>
+                                    <input type="range" id="lnaGain" min="0" max="40" step="8" value="16">
+                                    <span id="lnaGainValue">16 dB</span>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>VGA Gain (dB)</label>
+                                    <input type="range" id="vgaGain" min="0" max="62" step="2" value="20">
+                                    <span id="vgaGainValue">20 dB</span>
+                                </div>
+                                <div class="form-group">
+                                    <label>RF Amplifier</label>
+                                    <label class="toggle-switch" style="margin-top: 28px;">
+                                        <input type="checkbox" id="ampEnable">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="btn-group">
+                                <button class="btn btn-primary" id="testHardware">Test Connection</button>
+                                <button class="btn btn-secondary" id="applyHardware">Apply Settings</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="section-header">
+                            <i class="fas fa-wifi"></i>
+                            <div>
+                                <h2>Antenna Configuration</h2>
+                                <p>Configure connected antennas</p>
+                            </div>
+                        </div>
+                        <div class="section-content">
+                            <div class="band-list" id="antennaList">
+                                <!-- Antenna list will be populated here -->
+                            </div>
+                            <button class="btn btn-secondary" id="addAntennaBtn" style="margin-top: 16px;">
+                                <i class="fas fa-plus"></i> Add Antenna
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detection Settings -->
+                <div id="detectionSection" style="display: none;">
+                    <div class="settings-section">
+                        <div class="section-header">
+                            <i class="fas fa-radar"></i>
+                            <div>
+                                <h2>Detection Parameters</h2>
+                                <p>Configure detection sensitivity and thresholds</p>
+                            </div>
+                        </div>
+                        <div class="section-content">
+                            <div class="form-group">
+                                <label>Confidence Threshold (%)</label>
+                                <input type="range" id="confidenceThreshold" min="0" max="100" value="70">
+                                <span id="confidenceValue">70%</span>
+                            </div>
+                            <div class="form-group">
+                                <label>Signal-to-Noise Ratio (SNR) Threshold (dB)</label>
+                                <input type="range" id="snrThreshold" min="0" max="30" value="6">
+                                <span id="snrValue">6 dB</span>
+                            </div>
+                            <div class="form-group">
+                                <label>Minimum Detection Duration (ms)</label>
+                                <input type="number" id="minDuration" min="0" max="5000" step="100" value="500">
+                            </div>
+                            <div class="toggle-label">
+                                <span>Enable machine learning classification</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="mlEnabled" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="toggle-label">
+                                <span>Enable Remote ID decoding</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="remoteIdEnabled" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="section-header">
+                            <i class="fas fa-chart-line"></i>
+                            <div>
+                                <h2>Frequency Bands</h2>
+                                <p>Configure frequency bands to scan</p>
+                            </div>
+                        </div>
+                        <div class="section-content">
+                            <div class="band-list" id="frequencyBandList">
+                                <!-- Frequency bands will be populated here -->
+                            </div>
+                            <button class="btn btn-secondary" id="addBandBtn" style="margin-top: 16px;">
+                                <i class="fas fa-plus"></i> Add Band
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Alert Settings -->
+                <div id="alertsSection" style="display: none;">
+                    <div class="settings-section">
+                        <div class="section-header">
+                            <i class="fas fa-bell"></i>
+                            <div>
+                                <h2>Notification Channels</h2>
+                                <p>Configure alert notification methods</p>
+                            </div>
+                        </div>
+                        <div class="section-content">
+                            <div class="toggle-label">
+                                <span>Email Notifications</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="emailEnabled">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="form-group" id="emailSettings" style="display: none;">
+                                <label>SMTP Server</label>
+                                <input type="text" id="smtpServer" placeholder="smtp.gmail.com">
+                                <label>Port</label>
+                                <input type="number" id="smtpPort" value="587">
+                                <label>Username</label>
+                                <input type="text" id="smtpUsername">
+                                <label>Password</label>
+                                <input type="password" id="smtpPassword">
+                                <label>Recipient Emails</label>
+                                <input type="text" id="recipientEmails" placeholder="admin@example.com, security@example.com">
+                            </div>
+
+                            <div class="toggle-label">
+                                <span>SMS Notifications</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="smsEnabled">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="form-group" id="smsSettings" style="display: none;">
+                                <label>Twilio Account SID</label>
+                                <input type="text" id="twilioSid">
+                                <label>Twilio Auth Token</label>
+                                <input type="password" id="twilioToken">
+                                <label>Twilio Phone Number</label>
+                                <input type="text" id="twilioPhone">
+                                <label>Recipient Phone Numbers</label>
+                                <input type="text" id="recipientPhones" placeholder="+1234567890, +1987654321">
+                            </div>
+
+                            <div class="toggle-label">
+                                <span>Webhook Notifications</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="webhookEnabled">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="form-group" id="webhookSettings" style="display: none;">
+                                <label>Webhook URL</label>
+                                <input type="url" id="webhookUrl" placeholder="https://your-server.com/webhook">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="section-header">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <div>
+                                <h2>Alert Rules</h2>
+                                <p>Configure alert triggering rules</p>
+                            </div>
+                        </div>
+                        <div class="section-content">
+                            <div class="alert-rule-list" id="alertRuleList">
+                                <!-- Alert rules will be populated here -->
+                            </div>
+                            <button class="btn btn-secondary" id="addRuleBtn" style="margin-top: 16px;">
+                                <i class="fas fa-plus"></i> Add Rule
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Integrations Settings -->
+                <div id="integrationsSection" style="display: none;">
+                    <div class="settings-section">
+                        <div class="section-header">
+                            <i class="fas fa-cloud-upload-alt"></i>
+                            <div>
+                                <h2>External Services</h2>
+                                <p>Configure third-party integrations</p>
+                            </div>
+                        </div>
+                        <div class="section-content">
+                            <div class="toggle-label">
+                                <span>ADS-B Exchange Integration</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="adsbEnabled">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="toggle-label">
+                                <span>FlightRadar24 Integration</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="fr24Enabled">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label>API Key</label>
+                                <input type="password" id="fr24ApiKey">
+                            </div>
+
+                            <div class="toggle-label">
+                                <span>Google Maps API</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="googleMapsEnabled">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label>Google Maps API Key</label>
+                                <input type="password" id="googleMapsKey">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Security Settings -->
+                <div id="securitySection" style="display: none;">
+                    <div class="settings-section">
+                        <div class="section-header">
+                            <i class="fas fa-user-shield"></i>
+                            <div>
+                                <h2>Authentication</h2>
+                                <p>Configure security and access control</p>
+                            </div>
+                        </div>
+                        <div class="section-content">
+                            <div class="toggle-label">
+                                <span>Require authentication for API access</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="apiAuth" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label>Session Timeout (minutes)</label>
+                                <input type="number" id="sessionTimeout" min="5" max="1440" value="30">
+                            </div>
+                            <div class="form-group">
+                                <label>API Rate Limit (requests per minute)</label>
+                                <input type="number" id="rateLimit" min="10" max="1000" value="60">
+                            </div>
+                            <button class="btn btn-secondary" id="changePasswordBtn">Change Password</button>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="section-header">
+                            <i class="fas fa-database"></i>
+                            <div>
+                                <h2>Data Management</h2>
+                                <p>Configure data retention and backup</p>
+                            </div>
+                        </div>
+                        <div class="section-content">
+                            <div class="form-group">
+                                <label>Data Retention Period (days)</label>
+                                <input type="number" id="retentionDays" min="1" max="365" value="30">
+                            </div>
+                            <div class="toggle-label">
+                                <span>Auto-backup enabled</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="autoBackup">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="btn-group">
+                                <button class="btn btn-secondary" id="backupNowBtn">Backup Now</button>
+                                <button class="btn btn-danger" id="clearDataBtn">Clear All Data</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Advanced Settings -->
+                <div id="advancedSection" style="display: none;">
+                    <div class="settings-section">
+                        <div class="section-header">
+                            <i class="fas fa-terminal"></i>
+                            <div>
+                                <h2>Logging & Debug</h2>
+                                <p>Configure logging and debug options</p>
+                            </div>
+                        </div>
+                        <div class="section-content">
+                            <div class="form-group">
+                                <label>Log Level</label>
+                                <select id="logLevel">
+                                    <option value="debug">Debug</option>
+                                    <option value="info" selected>Info</option>
+                                    <option value="warning">Warning</option>
+                                    <option value="error">Error</option>
+                                </select>
+                            </div>
+                            <div class="toggle-label">
+                                <span>Enable debug mode</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="debugMode">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="btn-group">
+                                <button class="btn btn-secondary" id="exportLogsBtn">Export Logs</button>
+                                <button class="btn btn-danger" id="clearLogsBtn">Clear Logs</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="section-header">
+                            <i class="fas fa-sync-alt"></i>
+                            <div>
+                                <h2>System</h2>
+                                <p>System management options</p>
+                            </div>
+                        </div>
+                        <div class="section-content">
+                            <div class="btn-group">
+                                <button class="btn btn-warning" id="restartServiceBtn">Restart Service</button>
+                                <button class="btn btn-danger" id="factoryResetBtn">Factory Reset</button>
+                            </div>
+                            <div style="margin-top: 16px;">
+                                <p><strong>Version:</strong> <span id="version">2.0.0</span></p>
+                                <p><strong>Build Date:</strong> <span id="buildDate">2024-01-15</span></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="btn-group" style="margin-top: 24px;">
+                    <button class="btn btn-primary" id="saveSettings">Save All Settings</button>
+                    <button class="btn btn-secondary" id="resetSettings">Reset to Default</button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Add Antenna Modal -->
+    <div id="antennaModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Add Antenna</h3>
+                <i class="fas fa-times" onclick="closeModal('antennaModal')"></i>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Name</label>
+                    <input type="text" id="antennaName" placeholder="2.4 GHz Omni">
+                </div>
+                <div class="form-group">
+                    <label>Type</label>
+                    <select id="antennaType">
+                        <option value="omnidirectional">Omnidirectional</option>
+                        <option value="directional">Directional</option>
+                        <option value="yagi">Yagi</option>
+                        <option value="patch">Patch</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Frequency Range (MHz)</label>
+                    <input type="text" id="antennaFreq" placeholder="2400-2500">
+                </div>
+                <div class="form-group">
+                    <label>Gain (dBi)</label>
+                    <input type="number" id="antennaGain" step="0.5" value="3.0">
+                </div>
+                <div class="form-group">
+                    <label>Port</label>
+                    <select id="antennaPort">
+                        <option value="1">Port 1</option><option value="2">Port 2</option>
+                        <option value="3">Port 3</option><option value="4">Port 4</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('antennaModal')">Cancel</button>
+                <button class="btn btn-primary" id="saveAntennaBtn">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Band Modal -->
+    <div id="bandModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Add Frequency Band</h3>
+                <i class="fas fa-times" onclick="closeModal('bandModal')"></i>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Band Name</label>
+                    <input type="text" id="bandName" placeholder="2.4 GHz ISM">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Start Frequency (MHz)</label>
+                        <input type="number" id="bandStart" value="2400">
+                    </div>
+                    <div class="form-group">
+                        <label>End Frequency (MHz)</label>
+                        <input type="number" id="bandEnd" value="2483">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Priority</label>
+                    <select id="bandPriority">
+                        <option value="high">High</option>
+                        <option value="normal" selected>Normal</option>
+                        <option value="low">Low</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('bandModal')">Cancel</button>
+                <button class="btn btn-primary" id="saveBandBtn">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API Configuration
+        const API_URL = 'http://localhost:8000/api';
+        
+        // Global variables
+        let currentSection = 'general';
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            initNavigation();
+            loadSettings();
+            initEventListeners();
+            initToggleHandlers();
+            loadFrequencyBands();
+            loadAlertRules();
+            loadAntennas();
+        });
+        
+        // Navigation
+        function initNavigation() {
+            const navItems = document.querySelectorAll('.nav-item');
+            navItems.forEach(item => {
+                item.addEventListener('click', function() {
+                    navItems.forEach(nav => nav.classList.remove('active'));
+                    this.classList.add('active');
+                    
+                    const section = this.dataset.section;
+                    showSection(section);
+                    
+                    const titles = {
+                        general: 'General Settings',
+                        hardware: 'Hardware Settings',
+                        detection: 'Detection Settings',
+                        alerts: 'Alert Settings',
+                        integrations: 'Integration Settings',
+                        security: 'Security Settings',
+                        advanced: 'Advanced Settings'
+                    };
+                    document.getElementById('pageTitle').innerText = titles[section] || 'Settings';
+                });
+            });
+        }
+        
+        function showSection(section) {
+            const sections = ['general', 'hardware', 'detection', 'alerts', 'integrations', 'security', 'advanced'];
+            sections.forEach(s => {
+                const el = document.getElementById(s + 'Section');
+                if (el) el.style.display = 'none';
+            });
+            
+            const activeSection = document.getElementById(section + 'Section');
+            if (activeSection) activeSection.style.display = 'block';
+            currentSection = section;
+        }
+        
+        // Load/Save Settings
+        async function loadSettings() {
+            showLoading(true);
+            try {
+                const response = await fetch(`${API_URL}/config/system`);
+                const data = await response.json();
+                if (data.success && data.data) {
+                    populateSettings(data.data);
+                }
+            } catch (error) {
+                console.error('Error loading settings:', error);
+                showToast('Failed to load settings', 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        function populateSettings(settings) {
+            // General
+            if (settings.system_name) document.getElementById('systemName').value = settings.system_name;
+            if (settings.language) document.getElementById('language').value = settings.language;
+            if (settings.timezone) document.getElementById('timezone').value = settings.timezone;
+            if (settings.auto_start) document.getElementById('autoStart').checked = settings.auto_start;
+            if (settings.theme) document.getElementById('theme').value = settings.theme;
+            if (settings.refresh_rate) document.getElementById('refreshRate').value = settings.refresh_rate;
+            
+            // Hardware
+            if (settings.device_type) document.getElementById('deviceType').value = settings.device_type;
+            if (settings.sample_rate) document.getElementById('sampleRate').value = settings.sample_rate / 1e6;
+            if (settings.lna_gain) document.getElementById('lnaGain').value = settings.lna_gain;
+            if (settings.vga_gain) document.getElementById('vgaGain').value = settings.vga_gain;
+            updateGainValues();
+            
+            // Detection
+            if (settings.confidence_threshold) {
+                document.getElementById('confidenceThreshold').value = settings.confidence_threshold * 100;
+                document.getElementById('confidenceValue').innerText = `${settings.confidence_threshold * 100}%`;
+            }
+            if (settings.snr_threshold) {
+                document.getElementById('snrThreshold').value = settings.snr_threshold;
+                document.getElementById('snrValue').innerText = `${settings.snr_threshold} dB`;
+            }
+            if (settings.ml_enabled !== undefined) document.getElementById('mlEnabled').checked = settings.ml_enabled;
+            if (settings.remote_id_enabled !== undefined) document.getElementById('remoteIdEnabled').checked = settings.remote_id_enabled;
+            
+            // Security
+            if (settings.session_timeout) document.getElementById('sessionTimeout').value = settings.session_timeout;
+            if (settings.rate_limit) document.getElementById('rateLimit').value = settings.rate_limit;
+            if (settings.retention_days) document.getElementById('retentionDays').value = settings.retention_days;
+        }
+        
+        async function saveSettings() {
+            showLoading(true);
+            const settings = collectSettings();
+            try {
+                const response = await fetch(`${API_URL}/config/system`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(settings)
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showToast('Settings saved successfully', 'success');
+                } else {
+                    showToast('Failed to save settings', 'error');
+                }
+            } catch (error) {
+                console.error('Error saving settings:', error);
+                showToast('Error saving settings', 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        function collectSettings() {
+            return {
+                system_name: document.getElementById('systemName').value,
+                language: document.getElementById('language').value,
+                timezone: document.getElementById('timezone').value,
+                auto_start: document.getElementById('autoStart').checked,
+                telemetry: document.getElementById('telemetry').checked,
+                theme: document.getElementById('theme').value,
+                refresh_rate: parseInt(document.getElementById('refreshRate').value),
+                animations: document.getElementById('animations').checked,
+                device_type: document.getElementById('deviceType').value,
+                sample_rate: parseFloat(document.getElementById('sampleRate').value) * 1e6,
+                lna_gain: parseInt(document.getElementById('lnaGain').value),
+                vga_gain: parseInt(document.getElementById('vgaGain').value),
+                amp_enable: document.getElementById('ampEnable').checked,
+                confidence_threshold: parseInt(document.getElementById('confidenceThreshold').value) / 100,
+                snr_threshold: parseInt(document.getElementById('snrThreshold').value),
+                min_duration_ms: parseInt(document.getElementById('minDuration').value),
+                ml_enabled: document.getElementById('mlEnabled').checked,
+                remote_id_enabled: document.getElementById('remoteIdEnabled').checked,
+                email_enabled: document.getElementById('emailEnabled').checked,
+                sms_enabled: document.getElementById('smsEnabled').checked,
+                webhook_enabled: document.getElementById('webhookEnabled').checked,
+                session_timeout: parseInt(document.getElementById('sessionTimeout').value),
+                rate_limit: parseInt(document.getElementById('rateLimit').value),
+                retention_days: parseInt(document.getElementById('retentionDays').value),
+                auto_backup: document.getElementById('autoBackup').checked,
+                log_level: document.getElementById('logLevel').value,
+                debug_mode: document.getElementById('debugMode').checked
+            };
+        }
+        
+        // Frequency Bands Management
+        async function loadFrequencyBands() {
+            try {
+                const response = await fetch(`${API_URL}/config/frequency-bands`);
+                const data = await response.json();
+                if (data.success && data.data) {
+                    renderFrequencyBands(data.data);
+                }
+            } catch (error) {
+                console.error('Error loading bands:', error);
+            }
+        }
+        
+        function renderFrequencyBands(bands) {
+            const container = document.getElementById('frequencyBandList');
+            if (!container) return;
+            
+            if (!bands || bands.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 20px; color: #888;">No frequency bands configured</div>';
+                return;
+            }
+            
+            container.innerHTML = bands.map(band => `
+                <div class="band-item">
+                    <div class="band-info">
+                        <h4>${band.name}</h4>
+                        <p>${band.start_freq / 1e6} - ${band.end_freq / 1e6} MHz | Priority: ${band.priority}</p>
+                    </div>
+                    <div class="band-actions">
+                        <button onclick="editBand('${band.id}')"><i class="fas fa-edit"></i></button>
+                        <button onclick="deleteBand('${band.id}')"><i class="fas fa-trash"></i></button>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        // Alert Rules Management
+        async function loadAlertRules() {
+            try {
+                const response = await fetch(`${API_URL}/config/alert-rules`);
+                const data = await response.json();
+                if (data.success && data.data) {
+                    renderAlertRules(data.data);
+                }
+            } catch (error) {
+                console.error('Error loading alert rules:', error);
+            }
+        }
+        
+        function renderAlertRules(rules) {
+            const container = document.getElementById('alertRuleList');
+            if (!container) return;
+            
+            if (!rules || rules.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 20px; color: #888;">No alert rules configured</div>';
+                return;
+            }
+            
+            container.innerHTML = rules.map(rule => `
+                <div class="alert-rule-item">
+                    <div>
+                        <h4>${rule.name}</h4>
+                        <p>${rule.description || ''}</p>
+                    </div>
+                    <div>
+                        <span class="rule-badge rule-${rule.severity.toLowerCase()}">${rule.severity}</span>
+                        <button onclick="editRule('${rule.id}')" style="background: none; border: none; color: #888; margin-left: 8px; cursor: pointer;">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        // Antennas Management
+        async function loadAntennas() {
+            try {
+                const response = await fetch(`${API_URL}/hardware/antennas`);
+                const data = await response.json();
+                if (data.success && data.data) {
+                    renderAntennas(data.data);
+                }
+            } catch (error) {
+                console.error('Error loading antennas:', error);
+            }
+        }
+        
+        function renderAntennas(antennas) {
+            const container = document.getElementById('antennaList');
+            if (!container) return;
+            
+            if (!antennas || antennas.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 20px; color: #888;">No antennas configured</div>';
+                return;
+            }
+            
+            container.innerHTML = antennas.map(antenna => `
+                <div class="band-item">
+                    <div class="band-info">
+                        <h4>${antenna.name}</h4>
+                        <p>${antenna.type} | ${antenna.freq_min/1e6}-${antenna.freq_max/1e6} MHz | ${antenna.gain} dBi</p>
+                    </div>
+                    <div class="band-actions">
+                        <button onclick="editAntenna('${antenna.id}')"><i class="fas fa-edit"></i></button>
+                        <button onclick="deleteAntenna('${antenna.id}')"><i class="fas fa-trash"></i></button>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        // Event Listeners
+        function initEventListeners() {
+            // Gain sliders
+            document.getElementById('lnaGain').addEventListener('input', updateGainValues);
+            document.getElementById('vgaGain').addEventListener('input', updateGainValues);
+            
+            // Threshold sliders
+            document.getElementById('confidenceThreshold').addEventListener('input', (e) => {
+                document.getElementById('confidenceValue').innerText = `${e.target.value}%`;
+            });
+            document.getElementById('snrThreshold').addEventListener('input', (e) => {
+                document.getElementById('snrValue').innerText = `${e.target.value} dB`;
+            });
+            
+            // Save/Cancel buttons
+            document.getElementById('saveSettings').addEventListener('click', saveSettings);
+            document.getElementById('resetSettings').addEventListener('click', resetSettings);
+            document.getElementById('testHardware').addEventListener('click', testHardware);
+            document.getElementById('applyHardware').addEventListener('click', applyHardwareSettings);
+            document.getElementById('backupNowBtn').addEventListener('click', backupData);
+            document.getElementById('clearDataBtn').addEventListener('click', clearData);
+            document.getElementById('exportLogsBtn').addEventListener('click', exportLogs);
+            document.getElementById('clearLogsBtn').addEventListener('click', clearLogs);
+            document.getElementById('restartServiceBtn').addEventListener('click', restartService);
+            document.getElementById('factoryResetBtn').addEventListener('click', factoryReset);
+            document.getElementById('changePasswordBtn').addEventListener('click', changePassword);
+            
+            // Modal buttons
+            document.getElementById('addAntennaBtn').addEventListener('click', () => openModal('antennaModal'));
+            document.getElementById('addBandBtn').addEventListener('click', () => openModal('bandModal'));
+            document.getElementById('saveAntennaBtn').addEventListener('click', saveAntenna);
+            document.getElementById('saveBandBtn').addEventListener('click', saveBand);
+            document.getElementById('addRuleBtn').addEventListener('click', addAlertRule);
+            
+            // Toggle handlers
+            document.getElementById('emailEnabled').addEventListener('change', (e) => {
+                document.getElementById('emailSettings').style.display = e.target.checked ? 'block' : 'none';
+            });
+            document.getElementById('smsEnabled').addEventListener('change', (e) => {
+                document.getElementById('smsSettings').style.display = e.target.checked ? 'block' : 'none';
+            });
+            document.getElementById('webhookEnabled').addEventListener('change', (e) => {
+                document.getElementById('webhookSettings').style.display = e.target.checked ? 'block' : 'none';
+            });
+        }
+        
+        function initToggleHandlers() {
+            // Initialize visibility
+            document.getElementById('emailSettings').style.display = document.getElementById('emailEnabled').checked ? 'block' : 'none';
+            document.getElementById('smsSettings').style.display = document.getElementById('smsEnabled').checked ? 'block' : 'none';
+            document.getElementById('webhookSettings').style.display = document.getElementById('webhookEnabled').checked ? 'block' : 'none';
+        }
+        
+        function updateGainValues() {
+            document.getElementById('lnaGainValue').innerText = `${document.getElementById('lnaGain').value} dB`;
+            document.getElementById('vgaGainValue').innerText = `${document.getElementById('vgaGain').value} dB`;
+        }
+        
+        // Actions
+        async function testHardware() {
+            showLoading(true);
+            try {
+                const response = await fetch(`${API_URL}/hardware/test`);
+                const data = await response.json();
+                if (data.success) {
+                    showToast('Hardware connection successful', 'success');
+                } else {
+                    showToast('Hardware connection failed', 'error');
+                }
+            } catch (error) {
+                showToast('Hardware test failed', 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        async function applyHardwareSettings() {
+            showLoading(true);
+            try {
+                const settings = {
+                    device_type: document.getElementById('deviceType').value,
+                    sample_rate: parseFloat(document.getElementById('sampleRate').value) * 1e6,
+                    lna_gain: parseInt(document.getElementById('lnaGain').value),
+                    vga_gain: parseInt(document.getElementById('vgaGain').value),
+                    amp_enable: document.getElementById('ampEnable').checked
+                };
+                const response = await fetch(`${API_URL}/hardware/configure`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(settings)
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showToast('Hardware settings applied', 'success');
+                } else {
+                    showToast('Failed to apply hardware settings', 'error');
+                }
+            } catch (error) {
+                showToast('Error applying settings', 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        async function backupData() {
+            showLoading(true);
+            try {
+                const response = await fetch(`${API_URL}/system/backup`);
+                const data = await response.json();
+                if (data.success && data.data.download_url) {
+                    window.open(data.data.download_url, '_blank');
+                    showToast('Backup created', 'success');
+                }
+            } catch (error) {
+                showToast('Backup failed', 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        async function clearData() {
+            if (confirm('WARNING: This will delete all detection data. This action cannot be undone. Continue?')) {
+                showLoading(true);
+                try {
+                    const response = await fetch(`${API_URL}/system/data`, { method: 'DELETE' });
+                    const data = await response.json();
+                    if (data.success) {
+                        showToast('Data cleared successfully', 'success');
+                    }
+                } catch (error) {
+                    showToast('Failed to clear data', 'error');
+                } finally {
+                    showLoading(false);
+                }
+            }
+        }
+        
+        async function exportLogs() {
+            try {
+                const response = await fetch(`${API_URL}/system/logs/export`);
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `logs_${new Date().toISOString()}.zip`;
+                a.click();
+                URL.revokeObjectURL(url);
+                showToast('Logs exported', 'success');
+            } catch (error) {
+                showToast('Export failed', 'error');
+            }
+        }
+        
+        async function clearLogs() {
+            if (confirm('Clear all system logs?')) {
+                try {
+                    const response = await fetch(`${API_URL}/system/logs`, { method: 'DELETE' });
+                    const data = await response.json();
+                    if (data.success) {
+                        showToast('Logs cleared', 'success');
+                    }
+                } catch (error) {
+                    showToast('Failed to clear logs', 'error');
+                }
+            }
+        }
+        
+        async function restartService() {
+            if (confirm('Restart the detection service? This may take a few seconds.')) {
+                showLoading(true);
+                try {
+                    const response = await fetch(`${API_URL}/system/restart`, { method: 'POST' });
+                    const data = await response.json();
+                    if (data.success) {
+                        showToast('Service restarting...', 'success');
+                        setTimeout(() => location.reload(), 3000);
+                    }
+                } catch (error) {
+                    showToast('Restart failed', 'error');
+                    showLoading(false);
+                }
+            }
+        }
+        
+        async function factoryReset() {
+            if (confirm('WARNING: Factory reset will erase all settings and data. This cannot be undone. Continue?')) {
+                if (confirm('ARE YOU ABSOLUTELY SURE? Type "RESET" to confirm.')) {
+                    const confirmation = prompt('Type "RESET" to confirm factory reset');
+                    if (confirmation === 'RESET') {
+                        showLoading(true);
+                        try {
+                            const response = await fetch(`${API_URL}/system/factory-reset`, { method: 'POST' });
+                            const data = await response.json();
+                            if (data.success) {
+                                showToast('Factory reset complete. Reloading...', 'success');
+                                setTimeout(() => location.reload(), 2000);
+                            }
+                        } catch (error) {
+                            showToast('Factory reset failed', 'error');
+                            showLoading(false);
+                        }
+                    }
+                }
+            }
+        }
+        
+        function changePassword() {
+            alert('Change password functionality - would integrate with auth API');
+        }
+        
+        function resetSettings() {
+            if (confirm('Reset all settings to default values?')) {
+                // Reset form elements to default values
+                document.getElementById('systemName').value = 'Drone Detection System';
+                document.getElementById('confidenceThreshold').value = 70;
+                document.getElementById('confidenceValue').innerText = '70%';
+                document.getElementById('snrThreshold').value = 6;
+                document.getElementById('snrValue').innerHTML = '6 dB';
+                showToast('Settings reset to default', 'success');
+            }
+        }
+        
+        // Modal Functions
+        function openModal(modalId) {
+            document.getElementById(modalId).classList.add('active');
+        }
+        
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('active');
+        }
+        
+        function saveAntenna() {
+            const antenna = {
+                name: document.getElementById('antennaName').value,
+                type: document.getElementById('antennaType').value,
+                freq_range: document.getElementById('antennaFreq').value,
+                gain: parseFloat(document.getElementById('antennaGain').value),
+                port: parseInt(document.getElementById('antennaPort').value)
+            };
+            console.log('Save antenna:', antenna);
+            closeModal('antennaModal');
+            showToast('Antenna added', 'success');
+            loadAntennas();
+        }
+        
+        function saveBand() {
+            const band = {
+                name: document.getElementById('bandName').value,
+                start_freq: parseFloat(document.getElementById('bandStart').value) * 1e6,
+                end_freq: parseFloat(document.getElementById('bandEnd').value) * 1e6,
+                priority: document.getElementById('bandPriority').value
+            };
+            console.log('Save band:', band);
+            closeModal('bandModal');
+            showToast('Frequency band added', 'success');
+            loadFrequencyBands();
+        }
+        
+        function addAlertRule() {
+            alert('Add alert rule functionality');
+        }
+        
+        // Toast Notification
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `<i class="fas ${type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle'}"></i> ${message}`;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+        
+        function showLoading(show) {
+            document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none';
+        }
+        
+        // Expose functions to global scope
+        window.editBand = (id) => alert(`Edit band ${id}`);
+        window.deleteBand = (id) => {
+            if (confirm('Delete this frequency band?')) {
+                alert(`Delete band ${id}`);
+                loadFrequencyBands();
+            }
+        };
+        window.editRule = (id) => alert(`Edit rule ${id}`);
+        window.editAntenna = (id) => alert(`Edit antenna ${id}`);
+        window.deleteAntenna = (id) => {
+            if (confirm('Delete this antenna?')) {
+                alert(`Delete antenna ${id}`);
+                loadAntennas();
+            }
+        };
+        window.closeModal = closeModal;
+    </script>
+</body>
+</html>

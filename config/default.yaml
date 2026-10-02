@@ -1,0 +1,530 @@
+# ============================================================================
+# Drone Detection System - Default Fallback Configuration
+# Version: 2.0.0
+# Description: Default configuration values used when specific configs are missing
+# ============================================================================
+
+# System Information
+system:
+  name: "Drone Detection System"
+  version: "2.0.0"
+  environment: "production"  # development, staging, production
+  debug: false
+  timezone: "UTC"
+  
+  # API settings
+  api:
+    host: "0.0.0.0"
+    port: 8000
+    workers: 4
+    reload: false
+    log_level: "info"
+    
+  # WebSocket settings
+  websocket:
+    enabled: true
+    host: "0.0.0.0"
+    port: 8082
+    max_connections: 1000
+    ping_interval: 20
+    ping_timeout: 30
+  
+  # Paths
+  paths:
+    data: "data/"
+    logs: "data/logs/"
+    models: "models/"
+    config: "config/"
+    exports: "data/exports/"
+    recordings: "data/iq/live/"
+
+# Hardware Configuration
+hardware:
+  type: "auto"  # auto, hackrf, rtl_sdr, pluto, mock
+  auto_detect: true
+  
+  # Default device settings
+  default_device:
+    sample_rate: 10000000  # 10 MHz
+    center_freq: 2440000000  # 2.44 GHz
+    lna_gain: 16  # dB
+    vga_gain: 20  # dB
+    amp_enable: false
+    bias_tee: false
+  
+  # Mock hardware (for testing)
+  mock:
+    enabled: false
+    synthetic_mode: true
+    simulate_latency_ms: 5
+    inject_drone_probability: 0.3
+  
+  # Antenna configuration
+  antenna:
+    ports: 4
+    default_port: 1
+    auto_select: true
+
+# Detection Configuration
+detection:
+  enabled: true
+  
+  # Confidence thresholds
+  thresholds:
+    critical: 0.95
+    high: 0.85
+    medium: 0.70
+    low: 0.50
+    noise: 0.30
+  
+  # Processing parameters
+  processing:
+    fft_size: 2048
+    overlap: 0.5
+    window: "hann"
+    peak_prominence: 0.1
+    peak_width: 5
+  
+  # Signal parameters
+  signal:
+    min_snr_db: 6
+    min_bandwidth_hz: 10000
+    max_bandwidth_hz: 40000000
+    dwell_time_ms: 100
+  
+  # Machine learning
+  ml:
+    enabled: true
+    model_path: "models/classifier.pkl"
+    confidence_threshold: 0.7
+    use_gpu: false
+  
+  # Remote ID
+  remote_id:
+    enabled: true
+    decode_ble: true
+    decode_wifi: true
+    cache_ttl_seconds: 30
+  
+  # TDOA (Time Difference of Arrival)
+  tdoa:
+    enabled: false
+    min_receivers: 3
+    method: "chan"  # chan, taylor, least_squares
+    kalman_filter: true
+
+# Alert Configuration
+alerts:
+  enabled: true
+  
+  # Alert rules
+  rules:
+    high_confidence_drone:
+      enabled: true
+      severity: "high"
+      cooldown_seconds: 30
+    
+    geofence_violation:
+      enabled: true
+      severity: "critical"
+      cooldown_seconds: 10
+    
+    jamming_detected:
+      enabled: true
+      severity: "emergency"
+      cooldown_seconds: 300
+  
+  # Notification channels
+  notifications:
+    websocket: true
+    email: false
+    sms: false
+    webhook: false
+  
+  # Cooldown settings
+  cooldown:
+    default_seconds: 60
+    per_category:
+      drone_detected: 30
+      geofence_violation: 10
+      jamming_detected: 300
+
+# Spectrum Analysis
+spectrum:
+  enabled: true
+  
+  # Frequency bands to scan
+  bands:
+    - name: "2.4GHz_ISM"
+      center: 2440000000
+      min: 2400000000
+      max: 2483500000
+      enabled: true
+      priority: 1
+    
+    - name: "5.8GHz_ISM"
+      center: 5800000000
+      min: 5725000000
+      max: 5875000000
+      enabled: true
+      priority: 1
+    
+    - name: "5.2GHz"
+      center: 5200000000
+      min: 5150000000
+      max: 5250000000
+      enabled: false
+      priority: 2
+  
+  # Waterfall display
+  waterfall:
+    enabled: true
+    max_lines: 100
+    color_map: "jet"
+    persistence_ms: 5000
+  
+  # Peak detection
+  peak_detection:
+    enabled: true
+    threshold: 0.3
+    min_distance: 10
+    prominence: 0.1
+    width: 5
+
+# Recording Configuration
+recording:
+  enabled: true
+  
+  # File settings
+  files:
+    format: "raw"  # raw, npy, hdf5, zstd
+    max_size_mb: 1024
+    max_duration_seconds: 3600
+    compression_level: 3
+  
+  # Buffer settings
+  buffer:
+    size_mb: 50
+    pre_trigger_seconds: 5
+    post_trigger_seconds: 10
+  
+  # Auto-cleanup
+  cleanup:
+    enabled: true
+    max_total_storage_gb: 100
+    retention_days: 30
+
+# Playback Configuration
+playback:
+  enabled: true
+  
+  # Default settings
+  default_speed: 1.0
+  loop: false
+  chunk_size: 16384
+  buffer_size: 524288
+  
+  # Supported formats
+  formats:
+    - "raw"
+    - "npy"
+    - "hdf5"
+    - "zstd"
+    - "wav"
+    - "csv"
+
+# Storage Configuration
+storage:
+  # Database type
+  type: "sqlite"  # sqlite, postgresql, mysql
+  
+  # SQLite
+  sqlite:
+    path: "data/detections.db"
+    journal_mode: "WAL"
+    synchronous: 1
+    cache_size: -2000
+  
+  # PostgreSQL (if used)
+  postgresql:
+    host: "localhost"
+    port: 5432
+    database: "drone_detector"
+    user: "drone_user"
+    password: ""
+    pool_size: 10
+  
+  # MySQL (if used)
+  mysql:
+    host: "localhost"
+    port: 3306
+    database: "drone_detector"
+    user: "drone_user"
+    password: ""
+    pool_size: 10
+  
+  # Connection pool
+  pool:
+    min_size: 1
+    max_size: 10
+    max_idle_time: 300
+    max_lifetime: 3600
+
+# Messaging Configuration
+messaging:
+  # WebSocket
+  websocket:
+    enabled: true
+    path: "/ws"
+    max_message_size: 1048576  # 1 MB
+  
+  # Event Bus
+  event_bus:
+    enabled: true
+    max_queue_size: 1000
+  
+  # MQTT (if enabled)
+  mqtt:
+    enabled: false
+    host: "localhost"
+    port: 1883
+    client_id: "drone_detector"
+    username: ""
+    password: ""
+    tls: false
+    base_topic: "drone-detector"
+  
+  # Redis (if enabled)
+  redis:
+    enabled: false
+    host: "localhost"
+    port: 6379
+    db: 0
+    password: ""
+
+# External Services
+external:
+  # ADS-B Exchange
+  adsb:
+    enabled: false
+    base_url: "https://adsbexchange.com/api/read"
+    api_key: ""
+    rate_limit: 60
+  
+  # FlightRadar24
+  flightradar:
+    enabled: false
+    api_key: ""
+    rate_limit: 30
+  
+  # Geocoding
+  geocoding:
+    enabled: true
+    provider: "osm"  # osm, google, here
+    api_key: ""
+    cache_ttl_seconds: 86400
+    rate_limit: 1
+  
+  # Weather
+  weather:
+    enabled: false
+    provider: "openweather"
+    api_key: ""
+    update_interval_minutes: 30
+
+# Monitoring Configuration
+monitoring:
+  # Metrics
+  metrics:
+    enabled: true
+    port: 8001
+    path: "/metrics"
+  
+  # Health checks
+  health:
+    enabled: true
+    interval_seconds: 30
+    timeout_seconds: 5
+  
+  # Logging
+  logging:
+    level: "INFO"
+    format: "json"  # json, text, color
+    file: "data/logs/system.log"
+    max_size_mb: 100
+    backup_count: 10
+
+# UI Configuration
+ui:
+  enabled: true
+  
+  # Dashboard settings
+  dashboard:
+    refresh_rate_seconds: 5
+    default_view: "dashboard"
+    theme: "dark"
+  
+  # Map settings
+  map:
+    default_lat: 37.7749
+    default_lon: -122.4194
+    default_zoom: 12
+    tile_provider: "cartodb"
+    show_heatmap: false
+  
+  # Table settings
+  table:
+    page_size: 20
+    sort_column: "timestamp"
+    sort_direction: "desc"
+
+# Security Configuration
+security:
+  # Authentication
+  auth:
+    enabled: true
+    jwt_secret: "your-secret-key-change-in-production"
+    token_expiry_minutes: 30
+    refresh_expiry_days: 7
+  
+  # Rate limiting
+  rate_limit:
+    enabled: true
+    requests_per_minute: 60
+    burst_multiplier: 2
+  
+  # CORS
+  cors:
+    enabled: true
+    allowed_origins: ["*"]
+    allow_credentials: true
+    allowed_methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    allowed_headers: ["*"]
+
+# Development Settings
+development:
+  debug: false
+  auto_reload: false
+  mock_hardware: true
+  test_data: false
+  fake_detections: false
+  
+  # Development-specific
+  dev_mode:
+    enabled: false
+    bypass_auth: false
+    log_sql: false
+    profile_performance: false
+
+# Testing Settings
+testing:
+  enabled: false
+  mock_services: true
+  use_test_db: true
+  test_db_path: "data/test.db"
+  sample_rate: 1000000
+  mock_sdr: true
+
+# Performance Tuning
+performance:
+  # Thread pools
+  threads:
+    io_threads: 4
+    cpu_threads: 2
+    background_threads: 2
+  
+  # Queues
+  queues:
+    detection_queue_size: 1000
+    alert_queue_size: 500
+    recording_queue_size: 100
+  
+  # Buffers
+  buffers:
+    iq_buffer_size: 524288
+    spectrum_buffer_size: 4096
+    audio_buffer_size: 8192
+  
+  # Caching
+  cache:
+    enabled: true
+    ttl_seconds: 300
+    max_size: 1000
+
+# Feature Flags
+features:
+  # Core features
+  detection: true
+  recording: true
+  playback: true
+  analytics: true
+  reporting: true
+  
+  # Advanced features
+  machine_learning: true
+  remote_id: true
+  tdoa: false
+  geofencing: true
+  notifications: true
+  
+  # Experimental features
+  experimental:
+    ai_classification: false
+    predictive_tracking: false
+    auto_calibration: false
+
+# Recovery Settings
+recovery:
+  # Auto-restart
+  auto_restart:
+    enabled: true
+    max_attempts: 3
+    delay_seconds: 5
+  
+  # Graceful shutdown
+  graceful_shutdown:
+    enabled: true
+    timeout_seconds: 30
+  
+  # Backup
+  backup:
+    enabled: false
+    interval_hours: 24
+    keep_backups: 7
+
+# Environment Overrides
+# These can be overridden by environment-specific configs
+environments:
+  development:
+    system:
+      debug: true
+    hardware:
+      mock:
+        enabled: true
+    development:
+      debug: true
+      auto_reload: true
+      mock_hardware: true
+  
+  staging:
+    system:
+      debug: false
+    hardware:
+      mock:
+        enabled: false
+    development:
+      debug: false
+      auto_reload: false
+  
+  production:
+    system:
+      debug: false
+    hardware:
+      mock:
+        enabled: false
+    monitoring:
+      logging:
+        level: "WARNING"
+    security:
+      rate_limit:
+        enabled: true

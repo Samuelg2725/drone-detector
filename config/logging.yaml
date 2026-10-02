@@ -1,0 +1,577 @@
+# ============================================================================
+# Drone Detection System - Logging Configuration
+# Version: 2.0.0
+# Description: Comprehensive logging configuration for all system components
+# ============================================================================
+
+# Logging Version
+version: "2.0.0"
+
+# Global logging settings
+logging:
+  # Default log level for all components
+  default_level: INFO
+  
+  # Available log levels: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  
+  # Log format
+  format:
+    # Console format (human-readable)
+    console: "%(asctime)s [%(levelname)-8s] [%(name)s] %(message)s"
+    
+    # File format (detailed)
+    file: "%(asctime)s [%(levelname)-8s] [%(name)s] [%(filename)s:%(lineno)d] %(message)s"
+    
+    # JSON format (for machine parsing)
+    json: '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "module": "%(module)s", "function": "%(funcName)s", "line": %(lineno)d, "message": "%(message)s"}'
+    
+    # Date format
+    date_format: "%Y-%m-%d %H:%M:%S"
+
+# Console logging
+console:
+  enabled: true
+  level: INFO
+  format: console
+  colorize: true
+  stream: stdout  # stdout or stderr
+
+# File logging
+file:
+  enabled: true
+  
+  # Main application log
+  main:
+    enabled: true
+    path: "data/logs/system.log"
+    level: INFO
+    format: file
+    max_size_mb: 100
+    backup_count: 10
+    encoding: utf-8
+  
+  # Error log (separate file for errors)
+  error:
+    enabled: true
+    path: "data/logs/error.log"
+    level: ERROR
+    format: file
+    max_size_mb: 50
+    backup_count: 20
+    encoding: utf-8
+  
+  # JSON log (for machine parsing)
+  json:
+    enabled: false
+    path: "data/logs/system.json"
+    level: INFO
+    format: json
+    max_size_mb: 100
+    backup_count: 10
+
+# Rotating file handler settings
+rotating:
+  max_bytes: 10485760      # 10 MB
+  backup_count: 10
+  encoding: utf-8
+  delay: false
+
+# Timed rotating file handler
+timed_rotating:
+  when: "midnight"         # daily rotation
+  interval: 1
+  backup_count: 30
+  encoding: utf-8
+
+# Component-specific logging levels
+components:
+  # Domain layer
+  domain:
+    level: INFO
+    handlers: ["console", "file"]
+    
+    subcomponents:
+      algorithms:
+        level: INFO
+        handlers: ["console", "file"]
+        
+        modules:
+          fft: INFO
+          psd: INFO
+          peak_detection: INFO
+          pattern_matching: INFO
+          ml_classifier: INFO
+          remote_id_decoder: INFO
+          tdoa_engine: INFO
+          spectrum_analyzer: INFO
+      
+      entities:
+        level: INFO
+        modules:
+          signal: INFO
+          detection: INFO
+          drone: INFO
+      
+      policies:
+        level: INFO
+        modules:
+          threat_assessment: INFO
+          frequency_allocation: INFO
+          alert_policies: INFO
+  
+  # Application layer
+  app:
+    level: INFO
+    handlers: ["console", "file"]
+    
+    subcomponents:
+      startup:
+        level: INFO
+      pipelines:
+        level: INFO
+      services:
+        level: INFO
+      workers:
+        level: INFO
+  
+  # Infrastructure layer
+  infrastructure:
+    level: INFO
+    handlers: ["console", "file"]
+    
+    subcomponents:
+      # Hardware
+      hardware:
+        level: INFO
+        modules:
+          hackrf: INFO
+          rtl_sdr: INFO
+          pluto: INFO
+          mock_hardware: DEBUG
+          antenna_controller: INFO
+      
+      # Signal I/O
+      signal_io:
+        level: INFO
+        modules:
+          iq_stream: INFO
+          recorder: INFO
+          playback: INFO
+          file_reader: INFO
+      
+      # Storage
+      storage:
+        level: INFO
+        modules:
+          database: INFO
+          repositories: INFO
+          query_builder: INFO
+      
+      # Messaging
+      messaging:
+        level: INFO
+        modules:
+          websocket_server: INFO
+          event_bus: INFO
+          mqtt_client: INFO
+          redis_pubsub: INFO
+      
+      # External services
+      external:
+        level: INFO
+        modules:
+          adsb_client: INFO
+          flightradar_client: INFO
+          notification_service: INFO
+          geocoding: INFO
+      
+      # Monitoring
+      monitoring:
+        level: INFO
+        modules:
+          metrics: INFO
+          health_check: INFO
+          logger: INFO
+  
+  # API layer
+  api:
+    level: INFO
+    handlers: ["console", "file", "access"]
+    
+    subcomponents:
+      routes:
+        level: INFO
+        modules:
+          spectrum: INFO
+          detection: INFO
+          hardware: INFO
+          system: INFO
+          map: INFO
+          analytics: INFO
+          config: INFO
+          auth: INFO
+      
+      middleware:
+        level: INFO
+      dependencies:
+        level: INFO
+      schemas:
+        level: WARNING
+  
+  # UI/WebSocket
+  ui:
+    level: INFO
+    handlers: ["console", "file"]
+    
+    subcomponents:
+      websocket:
+        level: INFO
+      dashboard:
+        level: INFO
+
+# Access logging (API requests)
+access_log:
+  enabled: true
+  path: "data/logs/access.log"
+  format: '%(h)s %(l)s %(u)s [%(t)s] "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"'
+  max_size_mb: 100
+  backup_count: 30
+  fields:
+    - remote_addr
+    - remote_user
+    - time_local
+    - request_method
+    - request_path
+    - status
+    - body_bytes_sent
+    - http_referer
+    - http_user_agent
+    - request_time
+    - upstream_addr
+
+# Performance logging
+performance_log:
+  enabled: true
+  path: "data/logs/performance.log"
+  level: DEBUG
+  max_size_mb: 50
+  backup_count: 7
+  metrics:
+    - detection_latency
+    - processing_time
+    - fft_time
+    - database_query_time
+    - api_response_time
+    - memory_usage
+    - cpu_usage
+
+# Security logging (audit trail)
+security_log:
+  enabled: true
+  path: "data/logs/security.log"
+  level: INFO
+  max_size_mb: 50
+  backup_count: 30
+  events:
+    - authentication
+    - authorization
+    - configuration_change
+    - user_action
+    - system_startup
+    - system_shutdown
+    - data_access
+    - data_modification
+    - data_deletion
+
+# Debug logging (development)
+debug_log:
+  enabled: false
+  path: "data/logs/debug.log"
+  level: DEBUG
+  max_size_mb: 200
+  backup_count: 5
+  include_traceback: true
+
+# Structured logging (JSON format)
+structured_logging:
+  enabled: false
+  format: json
+  path: "data/logs/structured.json"
+  level: INFO
+  max_size_mb: 100
+  backup_count: 10
+  
+  # Fields to include in structured logs
+  fields:
+    - timestamp
+    - level
+    - logger
+    - module
+    - function
+    - line
+    - message
+    - request_id
+    - user_id
+    - session_id
+    - correlation_id
+    - hostname
+    - pid
+    - extra
+
+# Correlation and tracing
+correlation:
+  enabled: true
+  header_name: "X-Request-ID"
+  default_id_length: 32
+  propagate_to_children: true
+  
+  # Trace ID generation
+  trace_id:
+    source: "request_id"
+    format: "hex"
+
+# Syslog integration
+syslog:
+  enabled: false
+  address: "/dev/log"        # or ('localhost', 514)
+  facility: "user"
+  level: INFO
+  format: syslog
+  socktype: "udp"            # tcp or udp
+
+# Email alerts for critical logs
+email_alerts:
+  enabled: false
+  smtp_server: "smtp.gmail.com"
+  smtp_port: 587
+  username: "alerts@drone-detector.com"
+  password: "your-password"
+  recipients:
+    - "admin@drone-detector.com"
+    - "security@drone-detector.com"
+  
+  conditions:
+    - level: CRITICAL
+      min_occurrences: 1
+      window_seconds: 60
+    
+    - level: ERROR
+      min_occurrences: 5
+      window_seconds: 300
+
+# Log sampling (for high-volume logs)
+sampling:
+  enabled: false
+  
+  # Sample rates per logger (0.0 - 1.0)
+  rates:
+    "infrastructure.signal_io.iq_stream": 0.1
+    "api.routes.detection": 0.5
+    "domain.algorithms.fft": 0.01
+  
+  # Sample based on level
+  level_sampling:
+    DEBUG: 0.1
+    INFO: 0.5
+    WARNING: 1.0
+    ERROR: 1.0
+    CRITICAL: 1.0
+
+# Filtering (exclude certain logs)
+filters:
+  enabled: true
+  
+  # Exclude by logger name pattern
+  exclude_loggers:
+    - "urllib3"
+    - "requests"
+    - "asyncio"
+    - "matplotlib"
+    - "PIL"
+  
+  # Exclude by message pattern
+  exclude_messages:
+    - "Heartbeat"
+    - "Ping"
+    - "Keepalive"
+    - "Health check"
+  
+  # Exclude by level for specific loggers
+  exclude_levels:
+    "infrastructure.signal_io.iq_stream":
+      - DEBUG
+    "infrastructure.messaging.websocket_server":
+      - DEBUG
+      - INFO
+
+# Log buffering
+buffering:
+  enabled: true
+  buffer_size: 1000          # Number of log records
+  flush_interval_seconds: 5
+  
+  # Flush on shutdown
+  flush_on_exit: true
+
+# Async logging
+async_logging:
+  enabled: true
+  queue_size: 5000
+  max_queue_size: 10000
+  worker_threads: 2
+  drop_on_overflow: false
+
+# Compression
+compression:
+  enabled: true
+  algorithm: "gzip"          # gzip, bz2, lzma
+  level: 6                   # 0-9
+  rotate_on_size_mb: 100
+  archive_old_logs: true
+
+# Log retention
+retention:
+  enabled: true
+  max_days: 30               # Delete logs older than 30 days
+  max_size_gb: 10            # Maximum total log size
+  cleanup_interval_hours: 24
+  
+  # Archive before deletion
+  archive:
+    enabled: true
+    path: "data/logs/archived"
+    format: "zip"
+
+# Environment-specific configurations
+environments:
+  development:
+    console:
+      level: DEBUG
+      colorize: true
+    file:
+      main:
+        level: DEBUG
+    debug_log:
+      enabled: true
+    structured_logging:
+      enabled: false
+    sampling:
+      enabled: false
+    email_alerts:
+      enabled: false
+  
+  testing:
+    console:
+      level: DEBUG
+      colorize: false
+    file:
+      main:
+        level: DEBUG
+        path: "data/logs/test.log"
+    debug_log:
+      enabled: true
+    structured_logging:
+      enabled: false
+    sampling:
+      enabled: false
+    email_alerts:
+      enabled: false
+  
+  staging:
+    console:
+      level: INFO
+      colorize: true
+    file:
+      main:
+        level: INFO
+    debug_log:
+      enabled: false
+    structured_logging:
+      enabled: true
+    sampling:
+      enabled: true
+    email_alerts:
+      enabled: true
+  
+  production:
+    console:
+      level: WARNING
+      colorize: false
+    file:
+      main:
+        level: INFO
+    error:
+      level: ERROR
+    json:
+      enabled: true
+    structured_logging:
+      enabled: true
+    sampling:
+      enabled: true
+    email_alerts:
+      enabled: true
+    async_logging:
+      enabled: true
+
+# Example configuration for specific use cases
+examples:
+  # High-performance logging (for production)
+  high_performance:
+    async_logging:
+      enabled: true
+      queue_size: 10000
+    buffering:
+      enabled: true
+      buffer_size: 5000
+    sampling:
+      enabled: true
+      rates:
+        "infrastructure.signal_io.iq_stream": 0.05
+    structured_logging:
+      enabled: true
+    file:
+      main:
+        level: WARNING
+      error:
+        level: ERROR
+      json:
+        enabled: true
+  
+  # Debug logging (for development)
+  debug_mode:
+    console:
+      level: DEBUG
+      colorize: true
+    file:
+      main:
+        level: DEBUG
+    debug_log:
+      enabled: true
+    structured_logging:
+      enabled: false
+    sampling:
+      enabled: false
+    async_logging:
+      enabled: false
+  
+  # Security-focused logging
+  security_focused:
+    security_log:
+      enabled: true
+      level: INFO
+    access_log:
+      enabled: true
+    email_alerts:
+      enabled: true
+      conditions:
+        - level: CRITICAL
+        - level: ERROR
+          min_occurrences: 2
+    file:
+      main:
+        level: INFO
+      error:
+        level: WARNING
+    retention:
+      max_days: 90
+      max_size_gb: 50

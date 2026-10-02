@@ -1,0 +1,454 @@
+# ============================================================================
+# Docker Ignore File for Drone Detector System
+# Excludes unnecessary files from Docker build context
+# ============================================================================
+
+# ============================================================================
+# Version Control
+# ============================================================================
+.git/
+.gitignore
+.gitattributes
+.gitmodules
+.svn/
+.hg/
+.idea/
+.vscode/
+.vs/
+
+# ============================================================================
+# Python & Virtual Environments
+# ============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.venv/
+venv/
+ENV/
+env/
+virtualenv/
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+.coverage.*
+.coverage*.xml
+htmlcov/
+.tox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+*.py.orig
+*.py.rej
+
+# ============================================================================
+# Testing & Quality
+# ============================================================================
+tests/
+test_*.py
+*_test.py
+pytest.ini
+.conftest.py.swp
+.coverage.badge.svg
+coverage.xml
+*.cover
+.hypothesis/
+.benchmarks/
+*.prof
+*.lprof
+perf.data
+perf.data.old
+
+# ============================================================================
+# Data Storage (Excluded from build, mounted as volumes)
+# ============================================================================
+data/
+data/*
+!data/README.md
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.iq
+*.csv
+*.parquet
+*.hdf5
+*.h5
+*.npy
+*.npz
+
+# ============================================================================
+# Logs
+# ============================================================================
+logs/
+*.log
+*.log.*
+*.log.gz
+logfile-*
+system.log
+pipeline.log
+detection.log
+hardware.log
+api.log
+access.log
+error.log
+*.pid
+
+# ============================================================================
+# ML Models & Training Artifacts
+# ============================================================================
+models/
+models/*.pkl
+models/*.joblib
+models/*.h5
+models/*.pb
+models/*.onnx
+models/*.pt
+models/*.pth
+models/*.bin
+models/training/
+models/experiments/
+!models/README.md
+
+# ============================================================================
+# Exports & Reports
+# ============================================================================
+exports/
+reports/
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.mp4
+*.wav
+*.mp3
+
+# ============================================================================
+# IDE & Editor Files
+# ============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.directory
+*.sublime-*
+.project
+.pydevproject
+.settings/
+*.code-workspace
+.vim/
+.vimrc
+.gvimrc
+.emacs
+.emacs.d/
+
+# ============================================================================
+# Jupyter Notebooks
+# ============================================================================
+.ipynb_checkpoints/
+*.ipynb
+notebooks/
+!notebooks/README.md
+
+# ============================================================================
+# Documentation (Build-time only, not needed in image)
+# ============================================================================
+docs/
+*.md
+!README.md
+!LICENSE
+*.rst
+*.tex
+*.aux
+*.log
+*.out
+*.toc
+*.pdf
+*.epub
+*.mobi
+*.dvi
+Makefile
+mkdocs.yml
+docs-requirements.txt
+
+# ============================================================================
+# CI/CD & Deployment
+# ============================================================================
+.github/
+.gitlab/
+.mergify.yml
+.travis.yml
+circle.yml
+azure-pipelines.yml
+bitbucket-pipelines.yml
+.gitlab-ci.yml
+.jenkins/
+wercker.yml
+drone.yml
+buildkite/
+.woodpecker/
+.githooks/
+
+# ============================================================================
+# Docker & Container Artifacts
+# ============================================================================
+docker/
+!docker/Dockerfile
+!docker/Dockerfile.dev
+!docker/Dockerfile.prod
+!docker/docker-compose.yml
+!docker/docker-compose.*.yml
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.rar
+Dockerfile.*.context
+.dockerignore
+
+# ============================================================================
+# Kubernetes & Orchestration
+# ============================================================================
+k8s/
+helm/
+manifests/
+*.yaml
+*.yml
+!config/*.yaml
+!config/*.yml
+*.tmpl
+*.tpl
+
+# ============================================================================
+# Development Scripts (Not needed in production)
+# ============================================================================
+scripts/
+!scripts/migrate.py
+!scripts/create_admin.py
+*.sh
+*.bash
+*.zsh
+*.fish
+setup.sh
+install.sh
+run_dev.sh
+local_setup.sh
+
+# ============================================================================
+# Configuration (Sensitive data)
+# ============================================================================
+.env
+.env.*
+!.env.example
+*.local.yaml
+*.local.yml
+config/hardware.local.yaml
+config/system.local.yaml
+config/security.yaml
+*.key
+*.pem
+*.crt
+*.csr
+*.p12
+*.pfx
+*.jks
+keystore*
+truststore*
+id_rsa*
+id_dsa*
+*.enc
+*.gpg
+*.asc
+secrets/
+secret/
+.credentials/
+.aws/
+.gcloud/
+
+# ============================================================================
+# Hardware & SDR Specific
+# ============================================================================
+*.sdr
+*.bin
+*.dump
+*.capture
+*.samples
+*.cfile
+*.dat
+*.raw_iq
+calibration/
+calibration_data/
+*.cal
+
+# ============================================================================
+# Database & Migration Files
+# ============================================================================
+migrations/
+*.sql
+*.sql.gz
+*.dump
+*.pgdump
+*.backup
+alembic/
+!alembic.ini
+
+# ============================================================================
+# Frontend Build Artifacts
+# ============================================================================
+node_modules/
+package-lock.json
+yarn.lock
+bower_components/
+dist/
+build/
+*.css.map
+*.js.map
+*.min.js
+*.min.css
+
+# ============================================================================
+# OS & Temp Files
+# ============================================================================
+*.tmp
+*.temp
+*.cache
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lst
+*.lck
+
+# ============================================================================
+# Large Binary Files (Should be in volumes)
+# ============================================================================
+*.whl
+*.egg
+*.egg-info/
+*.exe
+*.msi
+*.dmg
+*.pkg
+*.deb
+*.rpm
+*.app
+*.bin
+*.iso
+*.vmdk
+*.vdi
+*.qcow2
+*.ova
+
+# ============================================================================
+# External Libraries (Managed by pip)
+# ============================================================================
+lib/
+lib64/
+include/
+local/
+share/
+man/
+info/
+*.so
+*.dylib
+*.dll
+*.a
+*.o
+
+# ============================================================================
+# Generated & Temporary Files
+# ============================================================================
+generated/
+temp/
+tmp/
+*.generated.py
+*.pb2.py
+*.pb2_grpc.py
+swagger.json
+openapi.json
+.graphql/
+.gql-gen/
+
+# ============================================================================
+# Secrets & Security (Double protection)
+# ============================================================================
+*secret*
+*password*
+*credential*
+*.keyring
+*.keychain
+.ssh/
+.gnupg/
+docker/secrets/
+
+# ============================================================================
+# Performance & Profiling
+# ============================================================================
+*.perf
+*.pprof
+*.flamegraph
+*.callgraph
+*.stacks
+*.heapsnapshot
+*.heapprofile
+*.cpuprofile
+*.memprofile
+
+# ============================================================================
+# Debug & Core Dumps
+# ============================================================================
+core.*
+*.core
+*.dmp
+*.crash
+hs_err_pid*
+replay_pid*
+
+# ============================================================================
+# Development & Test Data
+# ============================================================================
+fixtures/
+mock_data/
+sample_data/
+test_data/
+*.test.iq
+*.mock.iq
+
+# ============================================================================
+# Misc
+# ============================================================================
+*.swp
+*.swo
+.terraform/
+*.tfstate
+*.tfstate.*
+.terragrunt-cache/
+pre-commit-config.yaml
+.tox/
+.mypy_cache/
+.ruff_cache/
+.bandit/
+.safety/
+.docker/
+build/
+CMakeLists.txt
+cmake/
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json

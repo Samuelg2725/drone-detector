@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Radar Screen -->
+    <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor"/>
+    <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" opacity="0.3"/>
+    <circle cx="12" cy="12" r="6" fill="none" stroke="currentColor" opacity="0.2"/>
+    <circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" opacity="0.1"/>
+    
+    <!-- Radar Crosshairs -->
+    <line x1="12" y1="2" x2="12" y2="22" stroke="currentColor" opacity="0.3"/>
+    <line x1="2" y1="12" x2="22" y2="12" stroke="currentColor" opacity="0.3"/>
+    
+    <!-- Radar Sweep -->
+    <line x1="12" y1="12" x2="21" y2="8" stroke="currentColor" stroke-width="2.5"/>
+    
+    <!-- Radar Blips -->
+    <circle cx="9" cy="9" r="1.5" fill="currentColor" stroke="none"/>
+    <circle cx="16" cy="15" r="1" fill="currentColor" stroke="none" opacity="0.7"/>
+    <circle cx="7" cy="17" r="0.8" fill="currentColor" stroke="none" opacity="0.5"/>
+    
+    <!-- Radar Waves -->
+    <path d="M12,12 L21,8" stroke="currentColor" stroke-width="1" opacity="0.4"/>
+    <path d="M12,12 L19,6" stroke="currentColor" stroke-width="0.5" opacity="0.2"/>
+    
+    <!-- Center Point -->
+    <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/>
+</svg>

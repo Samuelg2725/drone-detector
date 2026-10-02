@@ -1,0 +1,845 @@
+/* ============================================================================
+   Drone Detection System - Threat Colors & Badges
+   Version: 2.0.0
+   ============================================================================ */
+
+/* ============================================================================
+   Threat Level Color System
+   ============================================================================ */
+
+:root {
+    /* Threat Level Colors */
+    --threat-critical: #7b1fa2;
+    --threat-critical-light: #9c27b0;
+    --threat-critical-dark: #4a148c;
+    --threat-critical-glow: rgba(123, 31, 162, 0.5);
+    
+    --threat-high: #f44336;
+    --threat-high-light: #ef5350;
+    --threat-high-dark: #c62828;
+    --threat-high-glow: rgba(244, 67, 54, 0.5);
+    
+    --threat-medium: #ff9800;
+    --threat-medium-light: #ffa726;
+    --threat-medium-dark: #ef6c00;
+    --threat-medium-glow: rgba(255, 152, 0, 0.5);
+    
+    --threat-low: #4caf50;
+    --threat-low-light: #66bb6a;
+    --threat-low-dark: #388e3c;
+    --threat-low-glow: rgba(76, 175, 80, 0.5);
+    
+    --threat-unknown: #9e9e9e;
+    --threat-unknown-light: #bdbdbd;
+    --threat-unknown-dark: #616161;
+    --threat-unknown-glow: rgba(158, 158, 158, 0.5);
+    
+    /* Status Colors */
+    --status-online: #4caf50;
+    --status-offline: #9e9e9e;
+    --status-warning: #ff9800;
+    --status-error: #f44336;
+    --status-ok: #2196f3;
+    --status-pending: #ffc107;
+    --status-processing: #00bcd4;
+}
+
+/* ============================================================================
+   Base Badge Styles
+   ============================================================================ */
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 12px;
+    border-radius: var(--radius-full);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-semibold);
+    line-height: 1.4;
+    white-space: nowrap;
+    transition: all var(--transition-fast);
+}
+
+.badge i {
+    margin-right: var(--spacing-xs);
+    font-size: 12px;
+}
+
+/* Badge Sizes */
+.badge-sm {
+    padding: 2px 8px;
+    font-size: var(--font-size-xs);
+}
+
+.badge-lg {
+    padding: 6px 16px;
+    font-size: var(--font-size-md);
+}
+
+.badge-xl {
+    padding: 8px 20px;
+    font-size: var(--font-size-lg);
+}
+
+/* Badge Shapes */
+.badge-rounded {
+    border-radius: var(--radius-md);
+}
+
+.badge-pill {
+    border-radius: var(--radius-full);
+}
+
+.badge-square {
+    border-radius: var(--radius-sm);
+}
+
+/* ============================================================================
+   Threat Badges
+   ============================================================================ */
+
+/* Critical Threat */
+.badge-threat-critical {
+    background: linear-gradient(135deg, var(--threat-critical), var(--threat-critical-dark));
+    color: white;
+    box-shadow: 0 0 8px var(--threat-critical-glow);
+}
+
+.badge-threat-critical-outline {
+    background: transparent;
+    border: 1px solid var(--threat-critical);
+    color: var(--threat-critical);
+}
+
+.badge-threat-critical-light {
+    background: rgba(123, 31, 162, 0.15);
+    color: var(--threat-critical-light);
+}
+
+/* High Threat */
+.badge-threat-high {
+    background: linear-gradient(135deg, var(--threat-high), var(--threat-high-dark));
+    color: white;
+    box-shadow: 0 0 6px var(--threat-high-glow);
+}
+
+.badge-threat-high-outline {
+    background: transparent;
+    border: 1px solid var(--threat-high);
+    color: var(--threat-high);
+}
+
+.badge-threat-high-light {
+    background: rgba(244, 67, 54, 0.15);
+    color: var(--threat-high-light);
+}
+
+/* Medium Threat */
+.badge-threat-medium {
+    background: linear-gradient(135deg, var(--threat-medium), var(--threat-medium-dark));
+    color: white;
+    box-shadow: 0 0 6px var(--threat-medium-glow);
+}
+
+.badge-threat-medium-outline {
+    background: transparent;
+    border: 1px solid var(--threat-medium);
+    color: var(--threat-medium);
+}
+
+.badge-threat-medium-light {
+    background: rgba(255, 152, 0, 0.15);
+    color: var(--threat-medium-light);
+}
+
+/* Low Threat */
+.badge-threat-low {
+    background: linear-gradient(135deg, var(--threat-low), var(--threat-low-dark));
+    color: white;
+    box-shadow: 0 0 4px var(--threat-low-glow);
+}
+
+.badge-threat-low-outline {
+    background: transparent;
+    border: 1px solid var(--threat-low);
+    color: var(--threat-low);
+}
+
+.badge-threat-low-light {
+    background: rgba(76, 175, 80, 0.15);
+    color: var(--threat-low-light);
+}
+
+/* Unknown Threat */
+.badge-threat-unknown {
+    background: linear-gradient(135deg, var(--threat-unknown), var(--threat-unknown-dark));
+    color: white;
+}
+
+.badge-threat-unknown-outline {
+    background: transparent;
+    border: 1px solid var(--threat-unknown);
+    color: var(--threat-unknown);
+}
+
+.badge-threat-unknown-light {
+    background: rgba(158, 158, 158, 0.15);
+    color: var(--threat-unknown-light);
+}
+
+/* ============================================================================
+   Status Badges
+   ============================================================================ */
+
+/* Online/Active */
+.badge-status-online {
+    background: linear-gradient(135deg, var(--status-online), #2e7d32);
+    color: white;
+}
+
+.badge-status-online-outline {
+    background: transparent;
+    border: 1px solid var(--status-online);
+    color: var(--status-online);
+}
+
+/* Offline/Inactive */
+.badge-status-offline {
+    background: linear-gradient(135deg, var(--status-offline), #757575);
+    color: white;
+}
+
+/* Warning */
+.badge-status-warning {
+    background: linear-gradient(135deg, var(--status-warning), #ef6c00);
+    color: white;
+}
+
+/* Error/Failure */
+.badge-status-error {
+    background: linear-gradient(135deg, var(--status-error), #c62828);
+    color: white;
+}
+
+/* OK/Success */
+.badge-status-ok {
+    background: linear-gradient(135deg, var(--status-ok), #1565c0);
+    color: white;
+}
+
+/* Pending */
+.badge-status-pending {
+    background: linear-gradient(135deg, var(--status-pending), #f39c12);
+    color: white;
+}
+
+/* Processing */
+.badge-status-processing {
+    background: linear-gradient(135deg, var(--status-processing), #00838f);
+    color: white;
+    animation: pulse 1.5s infinite;
+}
+
+/* ============================================================================
+   Threat Indicators (Dots & Pills)
+   ============================================================================ */
+
+/* Threat Indicator Dot */
+.threat-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: var(--radius-full);
+    margin-right: var(--spacing-sm);
+}
+
+.threat-dot-critical {
+    background: var(--threat-critical);
+    box-shadow: 0 0 8px var(--threat-critical-glow);
+    animation: pulse-threat-critical 1.5s infinite;
+}
+
+.threat-dot-high {
+    background: var(--threat-high);
+    box-shadow: 0 0 6px var(--threat-high-glow);
+    animation: pulse-threat-high 1.5s infinite;
+}
+
+.threat-dot-medium {
+    background: var(--threat-medium);
+    box-shadow: 0 0 4px var(--threat-medium-glow);
+    animation: pulse-threat-medium 1.5s infinite;
+}
+
+.threat-dot-low {
+    background: var(--threat-low);
+    box-shadow: 0 0 2px var(--threat-low-glow);
+}
+
+.threat-dot-unknown {
+    background: var(--threat-unknown);
+}
+
+/* Threat Indicator Bar */
+.threat-bar {
+    width: 100%;
+    height: 4px;
+    background: var(--border-light);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+}
+
+.threat-bar-fill {
+    height: 100%;
+    transition: width var(--transition-normal);
+}
+
+.threat-bar-fill-critical {
+    background: linear-gradient(90deg, var(--threat-critical), var(--threat-critical-light));
+}
+
+.threat-bar-fill-high {
+    background: linear-gradient(90deg, var(--threat-high), var(--threat-high-light));
+}
+
+.threat-bar-fill-medium {
+    background: linear-gradient(90deg, var(--threat-medium), var(--threat-medium-light));
+}
+
+.threat-bar-fill-low {
+    background: linear-gradient(90deg, var(--threat-low), var(--threat-low-light));
+}
+
+/* Threat Pill */
+.threat-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 12px;
+    border-radius: var(--radius-full);
+    font-weight: var(--font-semibold);
+    font-size: var(--font-size-sm);
+}
+
+.threat-pill-critical {
+    background: rgba(123, 31, 162, 0.2);
+    color: var(--threat-critical);
+    border-left: 3px solid var(--threat-critical);
+}
+
+.threat-pill-high {
+    background: rgba(244, 67, 54, 0.2);
+    color: var(--threat-high);
+    border-left: 3px solid var(--threat-high);
+}
+
+.threat-pill-medium {
+    background: rgba(255, 152, 0, 0.2);
+    color: var(--threat-medium);
+    border-left: 3px solid var(--threat-medium);
+}
+
+.threat-pill-low {
+    background: rgba(76, 175, 80, 0.2);
+    color: var(--threat-low);
+    border-left: 3px solid var(--threat-low);
+}
+
+.threat-pill-unknown {
+    background: rgba(158, 158, 158, 0.2);
+    color: var(--threat-unknown);
+    border-left: 3px solid var(--threat-unknown);
+}
+
+/* ============================================================================
+   Confidence Indicators
+   ============================================================================ */
+
+.confidence-meter {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.confidence-value {
+    font-weight: var(--font-bold);
+}
+
+.confidence-value-high {
+    color: var(--threat-low);
+}
+
+.confidence-value-medium {
+    color: var(--threat-medium);
+}
+
+.confidence-value-low {
+    color: var(--threat-high);
+}
+
+.confidence-bar-container {
+    flex: 1;
+    height: 6px;
+    background: var(--border-light);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+}
+
+.confidence-bar {
+    height: 100%;
+    border-radius: var(--radius-full);
+    transition: width var(--transition-normal);
+}
+
+.confidence-bar-high {
+    background: linear-gradient(90deg, var(--threat-low), var(--threat-low-light));
+}
+
+.confidence-bar-medium {
+    background: linear-gradient(90deg, var(--threat-medium), var(--threat-medium-light));
+}
+
+.confidence-bar-low {
+    background: linear-gradient(90deg, var(--threat-high), var(--threat-high-light));
+}
+
+/* ============================================================================
+   Signal Strength Indicators
+   ============================================================================ */
+
+.signal-strength {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.signal-bar {
+    width: 4px;
+    background: var(--accent-primary);
+    border-radius: 1px;
+    transition: height var(--transition-normal);
+}
+
+.signal-bar-1 { height: 6px; }
+.signal-bar-2 { height: 10px; }
+.signal-bar-3 { height: 14px; }
+.signal-bar-4 { height: 18px; }
+.signal-bar-5 { height: 22px; }
+
+.signal-strength-weak .signal-bar {
+    background: var(--threat-high);
+    opacity: 0.5;
+}
+
+.signal-strength-weak .signal-bar:nth-child(-n+2) {
+    opacity: 1;
+}
+
+.signal-strength-medium .signal-bar {
+    background: var(--threat-medium);
+}
+
+.signal-strength-medium .signal-bar:nth-child(-n+3) {
+    opacity: 1;
+}
+
+.signal-strength-medium .signal-bar:nth-child(n+4) {
+    opacity: 0.3;
+}
+
+.signal-strength-strong .signal-bar {
+    background: var(--threat-low);
+}
+
+.signal-strength-strong .signal-bar {
+    opacity: 1;
+}
+
+/* ============================================================================
+   Status Text Colors
+   ============================================================================ */
+
+.text-critical { color: var(--threat-critical); }
+.text-high { color: var(--threat-high); }
+.text-medium { color: var(--threat-medium); }
+.text-low { color: var(--threat-low); }
+.text-unknown { color: var(--threat-unknown); }
+
+.text-success { color: var(--status-online); }
+.text-warning { color: var(--status-warning); }
+.text-error { color: var(--status-error); }
+.text-info { color: var(--status-ok); }
+
+/* ============================================================================
+   Status Backgrounds
+   ============================================================================ */
+
+.bg-critical { background: linear-gradient(135deg, var(--threat-critical), var(--threat-critical-dark)); }
+.bg-high { background: linear-gradient(135deg, var(--threat-high), var(--threat-high-dark)); }
+.bg-medium { background: linear-gradient(135deg, var(--threat-medium), var(--threat-medium-dark)); }
+.bg-low { background: linear-gradient(135deg, var(--threat-low), var(--threat-low-dark)); }
+.bg-unknown { background: linear-gradient(135deg, var(--threat-unknown), var(--threat-unknown-dark)); }
+
+.bg-critical-light { background: rgba(123, 31, 162, 0.1); }
+.bg-high-light { background: rgba(244, 67, 54, 0.1); }
+.bg-medium-light { background: rgba(255, 152, 0, 0.1); }
+.bg-low-light { background: rgba(76, 175, 80, 0.1); }
+
+/* ============================================================================
+   Status Borders
+   ============================================================================ */
+
+.border-critical { border-left: 3px solid var(--threat-critical); }
+.border-high { border-left: 3px solid var(--threat-high); }
+.border-medium { border-left: 3px solid var(--threat-medium); }
+.border-low { border-left: 3px solid var(--threat-low); }
+
+/* ============================================================================
+   Status Icons
+   ============================================================================ */
+
+.status-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-full);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.status-icon-critical {
+    background: var(--threat-critical);
+    color: white;
+}
+
+.status-icon-high {
+    background: var(--threat-high);
+    color: white;
+}
+
+.status-icon-medium {
+    background: var(--threat-medium);
+    color: white;
+}
+
+.status-icon-low {
+    background: var(--threat-low);
+    color: white;
+}
+
+/* ============================================================================
+   Animations for Threat Indicators
+   ============================================================================ */
+
+@keyframes pulse-threat-critical {
+    0%, 100% {
+        box-shadow: 0 0 4px var(--threat-critical-glow);
+    }
+    50% {
+        box-shadow: 0 0 12px var(--threat-critical-glow);
+    }
+}
+
+@keyframes pulse-threat-high {
+    0%, 100% {
+        box-shadow: 0 0 3px var(--threat-high-glow);
+    }
+    50% {
+        box-shadow: 0 0 10px var(--threat-high-glow);
+    }
+}
+
+@keyframes pulse-threat-medium {
+    0%, 100% {
+        box-shadow: 0 0 2px var(--threat-medium-glow);
+    }
+    50% {
+        box-shadow: 0 0 8px var(--threat-medium-glow);
+    }
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+@keyframes glow {
+    0% {
+        opacity: 0.5;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+.animate-pulse {
+    animation: pulse 2s infinite;
+}
+
+.animate-glow {
+    animation: glow 1.5s ease-in-out infinite alternate;
+}
+
+/* ============================================================================
+   Status Card Styles
+   ============================================================================ */
+
+.status-card {
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    border: 1px solid var(--border-light);
+    transition: all var(--transition-normal);
+}
+
+.status-card-critical {
+    border-top: 4px solid var(--threat-critical);
+    background: linear-gradient(135deg, var(--bg-card), rgba(123, 31, 162, 0.05));
+}
+
+.status-card-high {
+    border-top: 4px solid var(--threat-high);
+    background: linear-gradient(135deg, var(--bg-card), rgba(244, 67, 54, 0.05));
+}
+
+.status-card-medium {
+    border-top: 4px solid var(--threat-medium);
+    background: linear-gradient(135deg, var(--bg-card), rgba(255, 152, 0, 0.05));
+}
+
+.status-card-low {
+    border-top: 4px solid var(--threat-low);
+    background: linear-gradient(135deg, var(--bg-card), rgba(76, 175, 80, 0.05));
+}
+
+.status-card-header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+}
+
+.status-card-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: var(--radius-lg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+}
+
+.status-card-icon-critical {
+    background: rgba(123, 31, 162, 0.2);
+    color: var(--threat-critical);
+}
+
+.status-card-icon-high {
+    background: rgba(244, 67, 54, 0.2);
+    color: var(--threat-high);
+}
+
+.status-card-icon-medium {
+    background: rgba(255, 152, 0, 0.2);
+    color: var(--threat-medium);
+}
+
+.status-card-icon-low {
+    background: rgba(76, 175, 80, 0.2);
+    color: var(--threat-low);
+}
+
+.status-card-title {
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-semibold);
+}
+
+.status-card-value {
+    font-size: var(--font-size-3xl);
+    font-weight: var(--font-bold);
+    margin-top: var(--spacing-sm);
+}
+
+/* ============================================================================
+   Alert Status Styles
+   ============================================================================ */
+
+.alert-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-radius: var(--radius-md);
+    background: var(--bg-card);
+}
+
+.alert-status-critical {
+    border-left: 3px solid var(--threat-critical);
+}
+
+.alert-status-high {
+    border-left: 3px solid var(--threat-high);
+}
+
+.alert-status-medium {
+    border-left: 3px solid var(--threat-medium);
+}
+
+.alert-status-low {
+    border-left: 3px solid var(--threat-low);
+}
+
+.alert-status-icon {
+    font-size: 18px;
+}
+
+.alert-status-critical .alert-status-icon {
+    color: var(--threat-critical);
+}
+
+.alert-status-high .alert-status-icon {
+    color: var(--threat-high);
+}
+
+.alert-status-medium .alert-status-icon {
+    color: var(--threat-medium);
+}
+
+.alert-status-low .alert-status-icon {
+    color: var(--threat-low);
+}
+
+/* ============================================================================
+   Table Row Status Colors
+   ============================================================================ */
+
+.table-row-critical {
+    background: rgba(123, 31, 162, 0.05);
+    border-left: 3px solid var(--threat-critical);
+}
+
+.table-row-high {
+    background: rgba(244, 67, 54, 0.05);
+    border-left: 3px solid var(--threat-high);
+}
+
+.table-row-medium {
+    background: rgba(255, 152, 0, 0.05);
+    border-left: 3px solid var(--threat-medium);
+}
+
+.table-row-low {
+    background: rgba(76, 175, 80, 0.05);
+    border-left: 3px solid var(--threat-low);
+}
+
+/* ============================================================================
+   Map Marker Colors
+   ============================================================================ */
+
+.marker-critical {
+    background: var(--threat-critical);
+    border: 2px solid white;
+    box-shadow: 0 0 10px var(--threat-critical-glow);
+}
+
+.marker-high {
+    background: var(--threat-high);
+    border: 2px solid white;
+    box-shadow: 0 0 8px var(--threat-high-glow);
+}
+
+.marker-medium {
+    background: var(--threat-medium);
+    border: 2px solid white;
+    box-shadow: 0 0 6px var(--threat-medium-glow);
+}
+
+.marker-low {
+    background: var(--threat-low);
+    border: 2px solid white;
+    box-shadow: 0 0 4px var(--threat-low-glow);
+}
+
+/* ============================================================================
+   Progress Bars by Threat Level
+   ============================================================================ */
+
+.progress-threat {
+    height: 8px;
+    border-radius: var(--radius-full);
+    overflow: hidden;
+    background: var(--border-light);
+}
+
+.progress-threat-fill {
+    height: 100%;
+    transition: width var(--transition-normal);
+}
+
+.progress-threat-fill-critical {
+    background: linear-gradient(90deg, var(--threat-critical), var(--threat-critical-light));
+}
+
+.progress-threat-fill-high {
+    background: linear-gradient(90deg, var(--threat-high), var(--threat-high-light));
+}
+
+.progress-threat-fill-medium {
+    background: linear-gradient(90deg, var(--threat-medium), var(--threat-medium-light));
+}
+
+.progress-threat-fill-low {
+    background: linear-gradient(90deg, var(--threat-low), var(--threat-low-light));
+}
+
+/* ============================================================================
+   Responsive Adjustments
+   ============================================================================ */
+
+@media (max-width: 768px) {
+    .badge {
+        padding: 2px 8px;
+        font-size: var(--font-size-xs);
+    }
+    
+    .badge-lg {
+        padding: 4px 12px;
+        font-size: var(--font-size-sm);
+    }
+    
+    .badge-xl {
+        padding: 6px 16px;
+        font-size: var(--font-size-md);
+    }
+    
+    .status-card-value {
+        font-size: var(--font-size-2xl);
+    }
+}
+
+/* ============================================================================
+   Print Styles
+   ============================================================================ */
+
+@media print {
+    .threat-dot-critical,
+    .threat-dot-high,
+    .threat-dot-medium,
+    .threat-dot-low {
+        box-shadow: none;
+        animation: none;
+    }
+    
+    .badge-threat-critical,
+    .badge-threat-high,
+    .badge-threat-medium,
+    .badge-threat-low {
+        background: #ddd;
+        color: black;
+        box-shadow: none;
+    }
+}

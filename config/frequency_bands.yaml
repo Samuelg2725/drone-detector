@@ -1,0 +1,44 @@
+# config/frequency_bands.yaml
+bands:
+  - name: "DJI_OcuSync_2.4G"
+    center: 2412000000
+    width: 20000000
+    drone_types: ["DJI Mavic", "DJI Phantom"]
+    
+  - name: "DJI_OcuSync_5.8G"
+    center: 5825000000
+    width: 20000000
+    drone_types: ["DJI Mavic", "DJI Phantom"]
+    
+  - name: "FPV_5.8G"
+    center: 5800000000
+    width: 200000000
+    drone_types: ["FPV", "Custom"]
+    
+  - name: "WiFi_2.4G"
+    center: 2440000000
+    width: 80000000
+    drone_types: ["Cheap drones", "DIY"]
+    
+drone_signatures:
+  dji_ocu_2g:
+    center_freq: 2412000000
+    bandwidth: 10000000
+    modulation: "OFDM"
+    pattern: "cyclic_prefix"
+    
+  dji_ocu_5g:
+    center_freq: 5825000000
+    bandwidth: 20000000
+    modulation: "OFDM"
+    
+  fpv_analog:
+    center_freq: 5800000000
+    bandwidth: 8000000
+    modulation: "FM"
+    
+  wifi_based:
+    center_freq: 2440000000
+    bandwidth: 20000000
+    modulation: "OFDM"
+    pattern: "beacon_frame"

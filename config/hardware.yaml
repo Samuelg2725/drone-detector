@@ -1,0 +1,40 @@
+# config/hardware.yaml
+hardware:
+  type: "hackrf"
+  vendor_id: "1d50"
+  product_id: "6089"
+  serial_number: null  # Auto-detect if null
+  
+sdr_settings:
+  sample_rate: 10000000  # 10 MHz (default)
+  center_freq: 2400000000  # 2.4 GHz for initial scan
+  frequency_bands:
+    - name: "2.4GHz_ISM"
+      center: 2440000000
+      bandwidth: 80000000  # 80 MHz scan width
+    - name: "5.2GHz"
+      center: 5200000000
+      bandwidth: 200000000
+    - name: "5.8GHz"
+      center: 5800000000
+      bandwidth: 200000000
+  
+gains:
+  lna_gain: 16  # 0-40 dB in 8 dB steps
+  vga_gain: 20  # 0-62 dB in 2 dB steps
+  amp_enable: false  # RF amplifier (0 or 11 dB)
+  
+scanning:
+  mode: "sweep"  # or "sequential"
+  dwell_time: 0.1  # seconds per frequency
+  fft_size: 2048
+  
+antenna:
+  type: "omnidirectional"
+  switch_enabled: false  # Set true if using Opera Cake
+  opera_cake:
+    port_count: 4
+    ports:
+      - freq_range: [2400000000, 2500000000]
+      - freq_range: [5200000000, 5300000000]
+      - freq_range: [5800000000, 5900000000]

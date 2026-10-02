@@ -1,0 +1,9 @@
+Leaflet Core: 1.9.4
+Leaflet Draw: 1.0.4
+Leaflet MarkerCluster: 1.5.0
+Leaflet Heatmap: 0.2.0
+Leaflet Control Geocoder: 2.4.0
+Leaflet EasyButton: 2.4.0
+Leaflet Fullscreen: 1.0.2
+
+Last Updated: 2024-01-15

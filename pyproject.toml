@@ -1,0 +1,51 @@
+[project]
+name = "drone-detector"
+version = "2.0.0"
+description = "Advanced Drone Detection System using SDR Technology"
+authors = [{name = "Drone Detection Team"}]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.9"
+
+[project.scripts]
+drone-detector = "run:main"
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W", "I", "C", "N", "D"]
+ignore = ["D100", "D104"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-v --strict-markers"
+markers = [
+    "slow: marks tests as slow",
+    "hardware: marks tests requiring real hardware",
+]
+
+[tool.coverage.run]
+source = ["app", "domain", "infrastructure"]
+omit = ["*/tests/*", "*/scripts/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if __name__ == .__main__.:",
+]

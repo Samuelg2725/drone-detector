@@ -1,0 +1,390 @@
+{
+  "model_info": {
+    "model_name": "Drone Detection Classifier",
+    "version": "2.0.0",
+    "algorithm": "RandomForest",
+    "training_date": "2024-01-15T10:30:00Z",
+    "num_features": 46,
+    "num_classes": 14,
+    "accuracy": 0.942,
+    "cv_mean_accuracy": 0.938,
+    "cv_std_accuracy": 0.012
+  },
+  
+  "feature_importance": {
+    "peak_magnitude": 0.1245,
+    "signal_to_noise_ratio": 0.1123,
+    "peak_freq": 0.0987,
+    "bandwidth_6db": 0.0876,
+    "spectral_flatness": 0.0765,
+    "power_spectral_density_std": 0.0654,
+    "cyclic_coherence": 0.0543,
+    "evm_rms": 0.0432,
+    "modulation_index": 0.0421,
+    "iq_variance": 0.0387,
+    "peak_prominence": 0.0354,
+    "power_spectral_density_mean": 0.0321,
+    "cyclic_amplitude_1": 0.0298,
+    "noise_floor": 0.0276,
+    "bandwidth_3db": 0.0254,
+    "carrier_offset": 0.0232,
+    "spectral_centroid": 0.0210,
+    "peak_width": 0.0189,
+    "phase_error_rms": 0.0167,
+    "spectral_spread": 0.0145,
+    "iq_std_real": 0.0134,
+    "bandwidth_20db": 0.0123,
+    "cyclic_frequency_1": 0.0112,
+    "spectral_rolloff": 0.0101,
+    "instantaneous_frequency_std": 0.0095,
+    "iq_mean_real": 0.0089,
+    "evm_peak": 0.0083,
+    "power_spectral_density_skew": 0.0077,
+    "total_harmonic_distortion": 0.0071,
+    "peak_to_average_power_ratio": 0.0065,
+    "iq_kurtosis": 0.0059,
+    "symbol_rate": 0.0053,
+    "iq_skewness": 0.0048,
+    "amplitude_variance": 0.0042,
+    "iq_mean_imag": 0.0036,
+    "frequency_deviation": 0.0031,
+    "phase_variance": 0.0028,
+    "cyclic_frequency_2": 0.0025,
+    "power_spectral_density_kurtosis": 0.0022,
+    "roll_off_factor": 0.0019,
+    "cyclic_amplitude_2": 0.0016,
+    "iq_std_imag": 0.0013,
+    "cyclic_coherence_secondary": 0.0011,
+    "cyclic_amplitude_3": 0.0009,
+    "cyclic_frequency_3": 0.0007,
+    "magnitude_error_rms": 0.0005
+  },
+
+  "feature_categories": {
+    "spectral_features": {
+      "total_importance": 0.6543,
+      "features": {
+        "peak_magnitude": 0.1245,
+        "peak_freq": 0.0987,
+        "bandwidth_6db": 0.0876,
+        "spectral_flatness": 0.0765,
+        "power_spectral_density_std": 0.0654,
+        "peak_prominence": 0.0354,
+        "power_spectral_density_mean": 0.0321,
+        "noise_floor": 0.0276,
+        "bandwidth_3db": 0.0254,
+        "spectral_centroid": 0.0210,
+        "peak_width": 0.0189,
+        "spectral_spread": 0.0145,
+        "bandwidth_20db": 0.0123,
+        "spectral_rolloff": 0.0101,
+        "power_spectral_density_skew": 0.0077,
+        "total_harmonic_distortion": 0.0071,
+        "peak_to_average_power_ratio": 0.0065,
+        "power_spectral_density_kurtosis": 0.0022,
+        "roll_off_factor": 0.0019
+      }
+    },
+    
+    "cyclostationary_features": {
+      "total_importance": 0.1021,
+      "features": {
+        "cyclic_coherence": 0.0543,
+        "cyclic_amplitude_1": 0.0298,
+        "cyclic_frequency_1": 0.0112,
+        "cyclic_frequency_2": 0.0025,
+        "cyclic_amplitude_2": 0.0016,
+        "cyclic_coherence_secondary": 0.0011,
+        "cyclic_amplitude_3": 0.0009,
+        "cyclic_frequency_3": 0.0007
+      }
+    },
+    
+    "statistical_features": {
+      "total_importance": 0.0878,
+      "features": {
+        "iq_variance": 0.0387,
+        "iq_std_real": 0.0134,
+        "instantaneous_frequency_std": 0.0095,
+        "iq_mean_real": 0.0089,
+        "iq_kurtosis": 0.0059,
+        "iq_skewness": 0.0048,
+        "amplitude_variance": 0.0042,
+        "iq_mean_imag": 0.0036,
+        "phase_variance": 0.0028,
+        "iq_std_imag": 0.0013
+      }
+    },
+    
+    "modulation_features": {
+      "total_importance": 0.0935,
+      "features": {
+        "evm_rms": 0.0432,
+        "modulation_index": 0.0421,
+        "carrier_offset": 0.0232,
+        "phase_error_rms": 0.0167,
+        "evm_peak": 0.0083,
+        "symbol_rate": 0.0053,
+        "frequency_deviation": 0.0031,
+        "magnitude_error_rms": 0.0005
+      }
+    }
+  },
+
+  "top_features_by_drone_type": {
+    "dji_mavic": {
+      "top_5": [
+        {"feature": "peak_freq", "importance": 0.156},
+        {"feature": "bandwidth_6db", "importance": 0.142},
+        {"feature": "signal_to_noise_ratio", "importance": 0.128},
+        {"feature": "peak_magnitude", "importance": 0.115},
+        {"feature": "spectral_flatness", "importance": 0.098}
+      ]
+    },
+    "dji_mini": {
+      "top_5": [
+        {"feature": "peak_freq", "importance": 0.168},
+        {"feature": "bandwidth_6db", "importance": 0.135},
+        {"feature": "signal_to_noise_ratio", "importance": 0.124},
+        {"feature": "peak_magnitude", "importance": 0.112},
+        {"feature": "noise_floor", "importance": 0.089}
+      ]
+    },
+    "fpv_analog": {
+      "top_5": [
+        {"feature": "peak_freq", "importance": 0.145},
+        {"feature": "bandwidth_6db", "importance": 0.132},
+        {"feature": "modulation_index", "importance": 0.121},
+        {"feature": "frequency_deviation", "importance": 0.108},
+        {"feature": "peak_magnitude", "importance": 0.095}
+      ]
+    },
+    "fpv_digital": {
+      "top_5": [
+        {"feature": "peak_freq", "importance": 0.152},
+        {"feature": "evm_rms", "importance": 0.138},
+        {"feature": "cyclic_coherence", "importance": 0.125},
+        {"feature": "modulation_index", "importance": 0.114},
+        {"feature": "bandwidth_6db", "importance": 0.098}
+      ]
+    },
+    "autel_evo": {
+      "top_5": [
+        {"feature": "peak_freq", "importance": 0.158},
+        {"feature": "signal_to_noise_ratio", "importance": 0.142},
+        {"feature": "bandwidth_6db", "importance": 0.128},
+        {"feature": "peak_magnitude", "importance": 0.115},
+        {"feature": "spectral_flatness", "importance": 0.092}
+      ]
+    },
+    "skydio": {
+      "top_5": [
+        {"feature": "peak_freq", "importance": 0.162},
+        {"feature": "cyclic_coherence", "importance": 0.145},
+        {"feature": "signal_to_noise_ratio", "importance": 0.132},
+        {"feature": "peak_magnitude", "importance": 0.118},
+        {"feature": "evm_rms", "importance": 0.096}
+      ]
+    },
+    "noise": {
+      "top_5": [
+        {"feature": "noise_floor", "importance": 0.185},
+        {"feature": "power_spectral_density_mean", "importance": 0.162},
+        {"feature": "signal_to_noise_ratio", "importance": 0.148},
+        {"feature": "peak_magnitude", "importance": 0.125},
+        {"feature": "power_spectral_density_std", "importance": 0.098}
+      ]
+    },
+    "interference_wifi": {
+      "top_5": [
+        {"feature": "peak_freq", "importance": 0.172},
+        {"feature": "bandwidth_6db", "importance": 0.155},
+        {"feature": "spectral_flatness", "importance": 0.138},
+        {"feature": "peak_magnitude", "importance": 0.121},
+        {"feature": "cyclic_coherence", "importance": 0.104}
+      ]
+    }
+  },
+
+  "feature_recommendations": {
+    "minimum_features_for_accuracy": {
+      "90_percent": {
+        "num_features": 12,
+        "features": [
+          "peak_magnitude",
+          "signal_to_noise_ratio",
+          "peak_freq",
+          "bandwidth_6db",
+          "spectral_flatness",
+          "power_spectral_density_std",
+          "cyclic_coherence",
+          "evm_rms",
+          "modulation_index",
+          "iq_variance",
+          "peak_prominence",
+          "power_spectral_density_mean"
+        ]
+      },
+      "95_percent": {
+        "num_features": 24,
+        "features": [
+          "peak_magnitude",
+          "signal_to_noise_ratio",
+          "peak_freq",
+          "bandwidth_6db",
+          "spectral_flatness",
+          "power_spectral_density_std",
+          "cyclic_coherence",
+          "evm_rms",
+          "modulation_index",
+          "iq_variance",
+          "peak_prominence",
+          "power_spectral_density_mean",
+          "cyclic_amplitude_1",
+          "noise_floor",
+          "bandwidth_3db",
+          "carrier_offset",
+          "spectral_centroid",
+          "peak_width",
+          "phase_error_rms",
+          "spectral_spread",
+          "iq_std_real",
+          "bandwidth_20db",
+          "cyclic_frequency_1",
+          "spectral_rolloff"
+        ]
+      }
+    },
+    
+    "computational_efficiency": {
+      "fast_mode": {
+        "num_features": 8,
+        "expected_accuracy": 0.85,
+        "features": [
+          "peak_magnitude",
+          "signal_to_noise_ratio",
+          "peak_freq",
+          "bandwidth_6db",
+          "spectral_flatness",
+          "power_spectral_density_std",
+          "cyclic_coherence",
+          "modulation_index"
+        ]
+      },
+      "balanced_mode": {
+        "num_features": 16,
+        "expected_accuracy": 0.92,
+        "features": [
+          "peak_magnitude",
+          "signal_to_noise_ratio",
+          "peak_freq",
+          "bandwidth_6db",
+          "spectral_flatness",
+          "power_spectral_density_std",
+          "cyclic_coherence",
+          "evm_rms",
+          "modulation_index",
+          "iq_variance",
+          "peak_prominence",
+          "power_spectral_density_mean",
+          "cyclic_amplitude_1",
+          "noise_floor",
+          "bandwidth_3db",
+          "carrier_offset"
+        ]
+      },
+      "accuracy_mode": {
+        "num_features": 32,
+        "expected_accuracy": 0.95,
+        "features": "all_top_32_features"
+      }
+    }
+  },
+
+  "confusion_matrix": {
+    "classes": [
+      "noise",
+      "dji_mavic",
+      "dji_mini",
+      "dji_phantom",
+      "fpv_analog",
+      "fpv_digital",
+      "autel_evo",
+      "skydio",
+      "parrot_anafi",
+      "hubsan",
+      "yuneec",
+      "interference_wifi",
+      "interference_ble",
+      "interference_radar"
+    ],
+    "matrix": [
+      [182, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 8, 4, 0],
+      [2, 178, 8, 6, 1, 2, 2, 1, 0, 0, 0, 0, 0, 0],
+      [1, 6, 182, 5, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0],
+      [1, 5, 4, 184, 0, 0, 2, 1, 0, 0, 1, 0, 1, 1],
+      [0, 1, 0, 0, 185, 8, 0, 0, 0, 0, 0, 3, 2, 1],
+      [0, 1, 1, 0, 6, 182, 0, 1, 0, 0, 0, 4, 3, 2],
+      [0, 3, 2, 3, 0, 0, 183, 5, 1, 1, 0, 1, 1, 0],
+      [0, 2, 1, 1, 0, 1, 4, 186, 0, 0, 1, 0, 2, 2],
+      [0, 0, 1, 0, 0, 0, 1, 0, 192, 3, 2, 0, 1, 0],
+      [0, 0, 2, 0, 0, 0, 1, 0, 4, 188, 3, 0, 2, 0],
+      [0, 0, 0, 2, 0, 0, 0, 2, 2, 4, 187, 0, 2, 1],
+      [5, 0, 1, 0, 2, 3, 0, 0, 0, 0, 0, 182, 6, 1],
+      [3, 0, 1, 0, 1, 2, 0, 1, 1, 1, 0, 7, 180, 3],
+      [1, 0, 0, 1, 1, 2, 0, 2, 0, 0, 1, 2, 3, 187]
+    ]
+  },
+
+  "precision_recall_f1": {
+    "noise": {"precision": 0.93, "recall": 0.91, "f1": 0.92},
+    "dji_mavic": {"precision": 0.89, "recall": 0.90, "f1": 0.89},
+    "dji_mini": {"precision": 0.88, "recall": 0.91, "f1": 0.89},
+    "dji_phantom": {"precision": 0.90, "recall": 0.92, "f1": 0.91},
+    "fpv_analog": {"precision": 0.94, "recall": 0.92, "f1": 0.93},
+    "fpv_digital": {"precision": 0.90, "recall": 0.91, "f1": 0.90},
+    "autel_evo": {"precision": 0.92, "recall": 0.91, "f1": 0.91},
+    "skydio": {"precision": 0.91, "recall": 0.93, "f1": 0.92},
+    "parrot_anafi": {"precision": 0.95, "recall": 0.96, "f1": 0.95},
+    "hubsan": {"precision": 0.94, "recall": 0.94, "f1": 0.94},
+    "yuneec": {"precision": 0.93, "recall": 0.93, "f1": 0.93},
+    "interference_wifi": {"precision": 0.87, "recall": 0.91, "f1": 0.89},
+    "interference_ble": {"precision": 0.86, "recall": 0.90, "f1": 0.88},
+    "interference_radar": {"precision": 0.93, "recall": 0.94, "f1": 0.93}
+  },
+
+  "roc_auc_scores": {
+    "noise": 0.98,
+    "dji_mavic": 0.96,
+    "dji_mini": 0.95,
+    "dji_phantom": 0.96,
+    "fpv_analog": 0.97,
+    "fpv_digital": 0.96,
+    "autel_evo": 0.96,
+    "skydio": 0.97,
+    "parrot_anafi": 0.99,
+    "hubsan": 0.98,
+    "yuneec": 0.97,
+    "interference_wifi": 0.94,
+    "interference_ble": 0.93,
+    "interference_radar": 0.96
+  },
+
+  "explanation": {
+    "top_feature_descriptions": {
+      "peak_magnitude": "Maximum power level in the spectrum. Higher values indicate stronger signals, characteristic of closer drones.",
+      "signal_to_noise_ratio": "Ratio of signal power to noise floor. Critical for distinguishing actual drone signals from background noise.",
+      "peak_freq": "Center frequency of the detected signal. Different drones operate on different frequency bands.",
+      "bandwidth_6db": "Signal bandwidth measured at 6dB below peak. Varies significantly between drone types.",
+      "spectral_flatness": "Measure of how flat the spectrum is. OFDM signals (DJI) have flatter spectra than FM signals (FPV).",
+      "power_spectral_density_std": "Standard deviation of the power spectrum. Indicates signal stability and modulation type.",
+      "cyclic_coherence": "Cyclostationary feature that captures periodicities in the signal. Strong for digital modulations.",
+      "evm_rms": "Error Vector Magnitude - measures modulation quality. Lower EVM indicates cleaner signals.",
+      "modulation_index": "Measure of modulation depth. Differentiates between analog (high index) and digital (low index) modulations.",
+      "iq_variance": "Variance of IQ samples. Indicates signal activity and modulation complexity."
+    }
+  },
+
+  "version": "2.0.0",
+  "last_updated": "2024-01-15T10:30:00Z"
+}

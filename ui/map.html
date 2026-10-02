@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Drone Detection System - Live Map View</title>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder@2.4.0/dist/Control.Geocoder.css"/>
+    
+    <!-- Leaflet Plugins CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-easybutton@2.4.0/src/easy-button.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heatmap.css">
+    
+    <!-- Custom CSS -->
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #0a0a1a;
+            overflow: hidden;
+        }
+
+        /* Map Container */
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+            z-index: 1;
+        }
+
+        /* Top Toolbar */
+        .toolbar {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            z-index: 1000;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            pointer-events: none;
+        }
+
+        .toolbar-left, .toolbar-right {
+            pointer-events: auto;
+        }
+
+        /* Logo */
+        .logo {
+            background: rgba(10, 10, 26, 0.9);
+            backdrop-filter: blur(10px);
+            padding: 10px 20px;
+            border-radius: 12px;
+            border: 1px solid rgba(79, 172, 254, 0.3);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo i {
+            font-size: 24px;
+            color: #4facfe;
+        }
+
+        .logo h1 {
+            font-size: 18px;
+            font-weight: 600;
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* Control Panel */
+        .control-panel {
+            background: rgba(10, 10, 26, 0.9);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            border: 1px solid rgba(79, 172, 254, 0.3);
+            display: flex;
+            gap: 8px;
+            padding: 8px;
+        }
+
+        .control-btn {
+            background: rgba(79, 172, 254, 0.1);
+            border: none;
+            color: #e0e0e0;
+            padding: 10px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .control-btn:hover {
+            background: rgba(79, 172, 254, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .control-btn.active {
+            background: linear-gradient(135deg, #4facfe, #00f2fe);
+            color: #fff;
+        }
+
+        /* Status Bar */
+        .status-bar {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            right: 20px;
+            z-index: 1000;
+            background: rgba(10, 10, 26, 0.9);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            border: 1px solid rgba(79, 172, 254, 0.3);
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            color: #888;
+            pointer-events: none;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #4caf50;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.disconnected {
+            background: #f44336;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Side Panel */
+        .side-panel {
+            position: absolute;
+            top: 80px;
+            right: 20px;
+            width: 320px;
+            z-index: 1000;
+            background: rgba(10, 10, 26, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            border: 1px solid rgba(79, 172, 254, 0.3);
+            overflow: hidden;
+            transition: transform 0.3s;
+            pointer-events: auto;
+        }
+
+        .side-panel.hidden {
+            transform: translateX(400px);
+        }
+
+        .panel-header {
+            padding: 16px;
+            background: rgba(79, 172, 254, 0.1);
+            border-bottom: 1px solid rgba(79, 172, 254, 0.2);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-header h3 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .panel-header i {
+            color: #888;
+            cursor: pointer;
+            transition: color 0.3s;
+        }
+
+        .panel-header i:hover {
+            color: #4facfe;
+        }
+
+        .panel-content {
+            padding: 16px;
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+
+        /* Drone List */
+        .drone-list-item {
+            padding: 12px;
+            margin-bottom: 8px;
+            background: rgba(79, 172, 254, 0.05);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .drone-list-item:hover {
+            background: rgba(79, 172, 254, 0.15);
+            transform: translateX(-4px);
+        }
+
+        .drone-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .drone-name {
+            font-weight: 600;
+            color: #4facfe;
+        }
+
+        .drone-threat {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+
+        .threat-high {
+            background: rgba(244, 67, 54, 0.2);
+            color: #ff6b6b;
+        }
+
+        .threat-medium {
+            background: rgba(255, 152, 0, 0.2);
+            color: #ffa726;
+        }
+
+        .threat-low {
+            background: rgba(76, 175, 80, 0.2);
+            color: #66bb6a;
+        }
+
+        .drone-details {
+            font-size: 11px;
+            color: #888;
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        /* Minimap Toggle */
+        .toggle-panel-btn {
+            position: absolute;
+            top: 80px;
+            right: 20px;
+            width: 40px;
+            height: 40px;
+            background: rgba(10, 10, 26, 0.9);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(79, 172, 254, 0.3);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 1000;
+            transition: all 0.3s;
+            pointer-events: auto;
+        }
+
+        .toggle-panel-btn:hover {
+            background: rgba(79, 172, 254, 0.2);
+        }
+
+        /* Info Window Styles */
+        .custom-popup .popup-title {
+            font-weight: 700;
+            color: #4facfe;
+            margin-bottom: 8px;
+        }
+
+        .custom-popup .popup-details {
+            font-size: 12px;
+            line-height: 1.6;
+        }
+
+        .custom-popup .popup-details i {
+            width: 20px;
+            color: #4facfe;
+        }
+
+        /* Heatmap Control */
+        .heatmap-control {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(79, 172, 254, 0.2);
+        }
+
+        .heatmap-range {
+            width: 100%;
+            margin: 8px 0;
+        }
+
+        /* Notification Toast */
+        .toast-notification {
+            position: fixed;
+            bottom: 80px;
+            right: 20px;
+            background: rgba(10, 10, 26, 0.95);
+            backdrop-filter: blur(10px);
+            border-left: 3px solid #4facfe;
+            padding: 12px 16px;
+            border-radius: 8px;
+            z-index: 1000;
+            animation: slideIn 0.3s ease;
+            pointer-events: auto;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        /* Loading Overlay */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            display: none;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(79, 172, 254, 0.3);
+            border-top-color: #4facfe;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .control-btn span {
+                display: none;
+            }
+            
+            .side-panel {
+                width: 280px;
+            }
+            
+            .status-bar {
+                font-size: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <!-- Top Toolbar -->
+    <div class="toolbar">
+        <div class="toolbar-left">
+            <div class="logo">
+                <i class="fas fa-drone"></i>
+                <h1>DroneSentinel</h1>
+            </div>
+        </div>
+        <div class="toolbar-right">
+            <div class="control-panel">
+                <button class="control-btn" id="btnCenter">
+                    <i class="fas fa-crosshairs"></i>
+                    <span>Center</span>
+                </button>
+                <button class="control-btn" id="btnTrack">
+                    <i class="fas fa-location-dot"></i>
+                    <span>Track</span>
+                </button>
+                <button class="control-btn" id="btnHeatmap">
+                    <i class="fas fa-fire"></i>
+                    <span>Heatmap</span>
+                </button>
+                <button class="control-btn" id="btnGeofence">
+                    <i class="fas fa-draw-polygon"></i>
+                    <span>Geofence</span>
+                </button>
+                <button class="control-btn" id="btnFullscreen">
+                    <i class="fas fa-expand"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Side Panel -->
+    <div class="toggle-panel-btn" id="togglePanelBtn">
+        <i class="fas fa-chevron-left"></i>
+    </div>
+    
+    <div class="side-panel" id="sidePanel">
+        <div class="panel-header">
+            <h3><i class="fas fa-drone"></i> Active Drones</h3>
+            <i class="fas fa-times" id="closePanelBtn"></i>
+        </div>
+        <div class="panel-content" id="droneListContainer">
+            <div style="text-align: center; padding: 20px; color: #888;">
+                <i class="fas fa-spinner fa-spin"></i> Loading drones...
+            </div>
+        </div>
+    </div>
+
+    <!-- Status Bar -->
+    <div class="status-bar">
+        <div class="status-item">
+            <span class="status-dot" id="statusDot"></span>
+            <span id="connectionStatus">Connecting...</span>
+        </div>
+        <div class="status-item">
+            <i class="fas fa-drone"></i>
+            <span id="droneCount">0</span> active drones
+        </div>
+        <div class="status-item">
+            <i class="fas fa-chart-line"></i>
+            <span id="lastUpdate">Last update: --:--:--</span>
+        </div>
+        <div class="status-item">
+            <i class="fas fa-map-marker-alt"></i>
+            <span id="coordinates">Lat: --, Lon: --</span>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toastContainer"></div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+    <script src="https://unpkg.com/leaflet-control-geocoder@2.4.0/dist/Control.Geocoder.js"></script>
+    <script src="https://unpkg.com/leaflet-easybutton@2.4.0/src/easy-button.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"></script>
+    
+    <script>
+        // Configuration
+        const WS_URL = 'ws://localhost:8082/ws';
+        const API_URL = 'http://localhost:8000/api';
+        
+        // Map Configuration
+        const DEFAULT_CENTER = [37.7749, -122.4194];
+        const DEFAULT_ZOOM = 12;
+        
+        // Global variables
+        let map = null;
+        let ws = null;
+        let droneMarkers = new Map();
+        let heatmapLayer = null;
+        let geofenceLayer = null;
+        let drawnItems = null;
+        let trackingEnabled = false;
+        let heatmapEnabled = false;
+        let currentTrackedDrone = null;
+        let updateInterval = null;
+        let droneData = [];
+        
+        // Icon definitions
+        const droneIcons = {
+            high: L.divIcon({
+                html: '<div style="background: #ff4444; width: 16px; height: 16px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px rgba(255,68,68,0.5);"></div>',
+                iconSize: [16, 16],
+                className: 'drone-marker'
+            }),
+            medium: L.divIcon({
+                html: '<div style="background: #ffaa44; width: 14px; height: 14px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px rgba(255,170,68,0.5);"></div>',
+                iconSize: [14, 14],
+                className: 'drone-marker'
+            }),
+            low: L.divIcon({
+                html: '<div style="background: #44ff44; width: 12px; height: 12px; border-radius: 50%; border: 1px solid white; box-shadow: 0 0 10px rgba(68,255,68,0.5);"></div>',
+                iconSize: [12, 12],
+                className: 'drone-marker'
+            }),
+            selected: L.divIcon({
+                html: '<div style="background: #4facfe; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 15px rgba(79,172,254,0.8); animation: pulse 1s infinite;"></div>',
+                iconSize: [20, 20],
+                className: 'drone-marker'
+            })
+        };
+        
+        // Initialize Map
+        function initMap() {
+            map = L.map('map').setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+            
+            // Add tile layer
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+                subdomains: 'abcd',
+                maxZoom: 19,
+                minZoom: 3
+            }).addTo(map);
+            
+            // Add scale control
+            L.control.scale({ metric: true, imperial: true, position: 'bottomleft' }).addTo(map);
+            
+            // Add geocoder control
+            L.Control.geocoder({
+                defaultMarkGeocode: false,
+                position: 'topleft',
+                placeholder: 'Search location...'
+            }).on('markgeocode', function(e) {
+                const center = e.geocode.center;
+                map.setView(center, 15);
+                L.marker(center, {
+                    icon: L.divIcon({
+                        html: '<i class="fas fa-map-marker-alt" style="color: #4facfe; font-size: 24px;"></i>',
+                        iconSize: [24, 24]
+                    })
+                }).addTo(map).bindPopup(e.geocode.name).openPopup();
+            }).addTo(map);
+            
+            // Add coordinate display
+            map.on('mousemove', function(e) {
+                document.getElementById('coordinates').innerHTML = 
+                    `Lat: ${e.latlng.lat.toFixed(4)}, Lon: ${e.latlng.lng.toFixed(4)}`;
+            });
+            
+            // Initialize draw control for geofencing
+            drawnItems = new L.FeatureGroup();
+            map.addLayer(drawnItems);
+            
+            const drawControl = new L.Control.Draw({
+                draw: {
+                    polygon: {
+                        shapeOptions: {
+                            color: '#4facfe',
+                            weight: 3,
+                            opacity: 0.7,
+                            fillColor: '#4facfe',
+                            fillOpacity: 0.2
+                        }
+                    },
+                    rectangle: {
+                        shapeOptions: {
+                            color: '#4facfe',
+                            weight: 3,
+                            opacity: 0.7,
+                            fillColor: '#4facfe',
+                            fillOpacity: 0.2
+                        }
+                    },
+                    circle: false,
+                    marker: false,
+                    polyline: false,
+                    circlemarker: false
+                },
+                edit: {
+                    featureGroup: drawnItems,
+                    remove: true
+                }
+            });
+            map.addControl(drawControl);
+            
+            map.on(L.Draw.Event.CREATED, function(e) {
+                const layer = e.layer;
+                drawnItems.addLayer(layer);
+                showToast('Geofence created', 'success');
+                saveGeofence(layer);
+            });
+            
+            map.on(L.Draw.Deleted, function() {
+                showToast('Geofence deleted', 'info');
+            });
+            
+            console.log('Map initialized');
+        }
+        
+        // WebSocket Connection
+        function initWebSocket() {
+            ws = new WebSocket(WS_URL);
+            
+            ws.onopen = function() {
+                console.log('WebSocket connected');
+                updateConnectionStatus(true);
+                ws.send(JSON.stringify({ type: 'subscribe', channel: 'positions' }));
+                ws.send(JSON.stringify({ type: 'subscribe', channel: 'detections' }));
+            };
+            
+            ws.onclose = function() {
+                console.log('WebSocket disconnected');
+                updateConnectionStatus(false);
+                setTimeout(initWebSocket, 3000);
+            };
+            
+            ws.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                updateConnectionStatus(false);
+            };
+            
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                handleWebSocketMessage(data);
+            };
+        }
+        
+        function handleWebSocketMessage(data) {
+            switch(data.type) {
+                case 'position':
+                    updateDronePosition(data.data);
+                    break;
+                case 'detection':
+                    addDetectionToHistory(data.data);
+                    break;
+                case 'bulk_positions':
+                    updateBulkPositions(data.data);
+                    break;
+                default:
+                    console.log('Unknown message type:', data.type);
+            }
+        }
+        
+        // Drone Position Updates
+        function updateDronePosition(position) {
+            const droneId = position.drone_id;
+            const lat = position.latitude;
+            const lon = position.longitude;
+            const threatLevel = position.threat_level?.toLowerCase() || 'low';
+            
+            // Determine icon based on threat level
+            let icon;
+            if (currentTrackedDrone === droneId) {
+                icon = droneIcons.selected;
+            } else if (threatLevel === 'high') {
+                icon = droneIcons.high;
+            } else if (threatLevel === 'medium') {
+                icon = droneIcons.medium;
+            } else {
+                icon = droneIcons.low;
+            }
+            
+            // Update or create marker
+            if (droneMarkers.has(droneId)) {
+                const marker = droneMarkers.get(droneId);
+                marker.setLatLng([lat, lon]);
+                marker.setIcon(icon);
+                
+                // Update popup content
+                const popupContent = createPopupContent(position);
+                marker.bindPopup(popupContent);
+            } else {
+                const marker = L.marker([lat, lon], { icon: icon })
+                    .addTo(map)
+                    .bindPopup(createPopupContent(position));
+                
+                marker.on('click', function() {
+                    selectDrone(droneId);
+                });
+                
+                droneMarkers.set(droneId, marker);
+            }
+            
+            // Update drone data store
+            const existingIndex = droneData.findIndex(d => d.drone_id === droneId);
+            if (existingIndex >= 0) {
+                droneData[existingIndex] = position;
+            } else {
+                droneData.push(position);
+            }
+            
+            // Update drone list
+            updateDroneList();
+            
+            // Update heatmap if enabled
+            if (heatmapEnabled) {
+                updateHeatmap();
+            }
+            
+            // Center on tracked drone
+            if (trackingEnabled && currentTrackedDrone === droneId) {
+                map.setView([lat, lon], map.getZoom());
+            }
+            
+            // Update status
+            document.getElementById('droneCount').innerText = droneMarkers.size;
+            document.getElementById('lastUpdate').innerHTML = `Last update: ${new Date().toLocaleTimeString()}`;
+        }
+        
+        function updateBulkPositions(positions) {
+            positions.forEach(pos => updateDronePosition(pos));
+        }
+        
+        function createPopupContent(position) {
+            return `
+                <div class="custom-popup" style="min-width: 200px;">
+                    <div class="popup-title">
+                        <i class="fas fa-drone"></i> ${position.drone_type || 'Unknown Drone'}
+                    </div>
+                    <div class="popup-details">
+                        <div><i class="fas fa-id-card"></i> ID: ${position.drone_id}</div>
+                        <div><i class="fas fa-chart-line"></i> Confidence: ${((position.confidence || 0) * 100).toFixed(1)}%</div>
+                        <div><i class="fas fa-exclamation-triangle"></i> Threat: ${position.threat_level || 'LOW'}</div>
+                        <div><i class="fas fa-chart-simple"></i> Altitude: ${position.altitude || 'N/A'} m</div>
+                        <div><i class="fas fa-tachometer-alt"></i> Speed: ${position.speed || 'N/A'} m/s</div>
+                        <div><i class="fas fa-compass"></i> Heading: ${position.heading || 'N/A'}°</div>
+                        <div><i class="fas fa-map-marker-alt"></i> (${position.latitude?.toFixed(4)}, ${position.longitude?.toFixed(4)})</div>
+                    </div>
+                    <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(79,172,254,0.2);">
+                        <button onclick="trackDrone('${position.drone_id}')" style="background: rgba(79,172,254,0.2); border: none; color: #4facfe; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px;">
+                            <i class="fas fa-location-dot"></i> Track
+                        </button>
+                        <button onclick="centerOnDrone('${position.drone_id}')" style="background: rgba(79,172,254,0.2); border: none; color: #4facfe; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-left: 8px;">
+                            <i class="fas fa-crosshairs"></i> Center
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Drone List Management
+        function updateDroneList() {
+            const container = document.getElementById('droneListContainer');
+            
+            if (droneData.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 20px; color: #888;"><i class="fas fa-info-circle"></i> No active drones</div>';
+                return;
+            }
+            
+            // Sort by threat level (high to low)
+            const sorted = [...droneData].sort((a, b) => {
+                const threatOrder = { 'high': 3, 'medium': 2, 'low': 1 };
+                return (threatOrder[b.threat_level?.toLowerCase()] || 0) - (threatOrder[a.threat_level?.toLowerCase()] || 0);
+            });
+            
+            container.innerHTML = sorted.map(drone => `
+                <div class="drone-list-item" onclick="selectDrone('${drone.drone_id}')">
+                    <div class="drone-header">
+                        <span class="drone-name">
+                            <i class="fas fa-drone"></i> ${drone.drone_type || 'Unknown'}
+                        </span>
+                        <span class="drone-threat threat-${(drone.threat_level?.toLowerCase() || 'low')}">
+                            ${drone.threat_level || 'LOW'}
+                        </span>
+                    </div>
+                    <div class="drone-details">
+                        <span><i class="fas fa-chart-line"></i> ${((drone.confidence || 0) * 100).toFixed(0)}%</span>
+                        <span><i class="fas fa-arrow-up"></i> ${drone.altitude || 'N/A'}m</span>
+                        <span><i class="fas fa-tachometer-alt"></i> ${drone.speed || 'N/A'}m/s</span>
+                    </div>
+                    <div style="margin-top: 8px;">
+                        <button onclick="event.stopPropagation(); centerOnDrone('${drone.drone_id}')" style="background: rgba(79,172,254,0.2); border: none; color: #4facfe; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 10px; margin-right: 8px;">
+                            <i class="fas fa-crosshairs"></i>
+                        </button>
+                        <button onclick="event.stopPropagation(); trackDrone('${drone.drone_id}')" style="background: rgba(79,172,254,0.2); border: none; color: #4facfe; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 10px;">
+                            <i class="fas fa-location-dot"></i> ${currentTrackedDrone === drone.drone_id ? 'Tracking' : 'Track'}
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        // Drone Selection and Tracking
+        function selectDrone(droneId) {
+            const drone = droneData.find(d => d.drone_id === droneId);
+            if (!drone) return;
+            
+            // Update marker icons
+            droneMarkers.forEach((marker, id) => {
+                const threatLevel = droneData.find(d => d.drone_id === id)?.threat_level?.toLowerCase() || 'low';
+                let icon;
+                if (id === droneId) {
+                    icon = droneIcons.selected;
+                } else if (threatLevel === 'high') {
+                    icon = droneIcons.high;
+                } else if (threatLevel === 'medium') {
+                    icon = droneIcons.medium;
+                } else {
+                    icon = droneIcons.low;
+                }
+                marker.setIcon(icon);
+            });
+            
+            // Center on selected drone
+            map.setView([drone.latitude, drone.longitude], 15);
+            
+            // Open popup
+            const marker = droneMarkers.get(droneId);
+            if (marker) {
+                marker.openPopup();
+            }
+            
+            showToast(`Selected ${drone.drone_type || 'drone'}`, 'info');
+        }
+        
+        function centerOnDrone(droneId) {
+            const drone = droneData.find(d => d.drone_id === droneId);
+            if (drone) {
+                map.setView([drone.latitude, drone.longitude], 16);
+                showToast(`Centered on drone ${drone.drone_id}`, 'info');
+            }
+        }
+        
+        function trackDrone(droneId) {
+            if (currentTrackedDrone === droneId) {
+                currentTrackedDrone = null;
+                trackingEnabled = false;
+                showToast('Tracking stopped', 'info');
+            } else {
+                currentTrackedDrone = droneId;
+                trackingEnabled = true;
+                showToast(`Tracking drone ${droneId}`, 'success');
+                centerOnDrone(droneId);
+            }
+            
+            // Update button states
+            updateDroneList();
+            
+            // Update marker icons
+            const threatLevel = droneData.find(d => d.drone_id === droneId)?.threat_level?.toLowerCase() || 'low';
+            const marker = droneMarkers.get(droneId);
+            if (marker) {
+                marker.setIcon(droneIcons.selected);
+            }
+        }
+        
+        // Heatmap Functions
+        function updateHeatmap() {
+            if (!heatmapEnabled) return;
+            
+            const heatmapPoints = droneData.map(drone => [
+                drone.latitude,
+                drone.longitude,
+                drone.confidence || 1
+            ]);
+            
+            if (heatmapLayer) {
+                map.removeLayer(heatmapLayer);
+            }
+            
+            heatmapLayer = L.heatLayer(heatmapPoints, {
+                radius: 25,
+                blur: 15,
+                maxZoom: 17,
+                minOpacity: 0.3,
+                gradient: {
+                    0.2: '#44ff44',
+                    0.4: '#aaff44',
+                    0.6: '#ffaa44',
+                    0.8: '#ff6644',
+                    1.0: '#ff4444'
+                }
+            }).addTo(map);
+        }
+        
+        function toggleHeatmap() {
+            heatmapEnabled = !heatmapEnabled;
+            const btn = document.getElementById('btnHeatmap');
+            
+            if (heatmapEnabled) {
+                updateHeatmap();
+                btn.classList.add('active');
+                showToast('Heatmap enabled', 'success');
+            } else {
+                if (heatmapLayer) {
+                    map.removeLayer(heatmapLayer);
+                    heatmapLayer = null;
+                }
+                btn.classList.remove('active');
+                showToast('Heatmap disabled', 'info');
+            }
+        }
+        
+        // Geofence Functions
+        async function saveGeofence(layer) {
+            const geometry = layer.toGeoJSON();
+            const coords = geometry.geometry.coordinates[0];
+            
+            const geofenceData = {
+                name: `Geofence ${new Date().toLocaleString()}`,
+                geometry: coords,
+                type: 'restricted'
+            };
+            
+            try {
+                const response = await fetch(`${API_URL}/map/geofence`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(geofenceData)
+                });
+                
+                if (response.ok) {
+                    showToast('Geofence saved successfully', 'success');
+                }
+            } catch (error) {
+                console.error('Error saving geofence:', error);
+                showToast('Error saving geofence', 'error');
+            }
+        }
+        
+        async function loadGeofences() {
+            try {
+                const response = await fetch(`${API_URL}/map/geofence`);
+                const data = await response.json();
+                
+                if (data.success && data.data) {
+                    data.data.forEach(geofence => {
+                        const coords = geofence.geometry.map(c => [c[1], c[0]]);
+                        const polygon = L.polygon(coords, {
+                            color: '#4facfe',
+                            weight: 3,
+                            opacity: 0.7,
+                            fillColor: '#4facfe',
+                            fillOpacity: 0.2
+                        }).addTo(map);
+                        
+                        polygon.bindPopup(`<b>${geofence.name}</b><br>Type: ${geofence.type}`);
+                        drawnItems.addLayer(polygon);
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading geofences:', error);
+            }
+        }
+        
+        // UI Controls
+        function centerMap() {
+            if (currentTrackedDrone) {
+                centerOnDrone(currentTrackedDrone);
+            } else if (droneData.length > 0) {
+                const bounds = [];
+                droneData.forEach(drone => {
+                    bounds.push([drone.latitude, drone.longitude]);
+                });
+                map.fitBounds(bounds);
+            } else {
+                map.setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+            }
+            showToast('Map centered', 'info');
+        }
+        
+        function toggleFullscreen() {
+            const element = document.documentElement;
+            if (!document.fullscreenElement) {
+                element.requestFullscreen();
+                showToast('Fullscreen mode enabled', 'info');
+            } else {
+                document.exitFullscreen();
+                showToast('Fullscreen mode exited', 'info');
+            }
+        }
+        
+        function togglePanel() {
+            const panel = document.getElementById('sidePanel');
+            const toggleBtn = document.getElementById('togglePanelBtn');
+            
+            panel.classList.toggle('hidden');
+            if (panel.classList.contains('hidden')) {
+                toggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            } else {
+                toggleBtn.innerHTML = '<i class="fas fa-chevron-left"></i>';
+            }
+        }
+        
+        // Detection History
+        let detectionHistory = [];
+        
+        function addDetectionToHistory(detection) {
+            detectionHistory.unshift(detection);
+            if (detectionHistory.length > 100) detectionHistory.pop();
+            
+            // Show toast for new detection
+            showToast(`${detection.drone_type || 'Drone'} detected with ${((detection.confidence || 0) * 100).toFixed(0)}% confidence`, 'warning');
+        }
+        
+        // Toast Notifications
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = 'toast-notification';
+            toast.style.borderLeftColor = type === 'success' ? '#4caf50' : type === 'error' ? '#f44336' : '#4facfe';
+            toast.innerHTML = `
+                <i class="fas ${type === 'info' ? 'fa-info-circle' : type === 'success' ? 'fa-check-circle' : 'fa-exclamation-triangle'}"></i>
+                ${message}
+            `;
+            container.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.remove();
+            }, 3000);
+        }
+        
+        // Connection Status
+        function updateConnectionStatus(connected) {
+            const dot = document.getElementById('statusDot');
+            const statusText = document.getElementById('connectionStatus');
+            
+            if (connected) {
+                dot.style.background = '#4caf50';
+                dot.classList.remove('disconnected');
+                statusText.innerText = 'Connected';
+            } else {
+                dot.style.background = '#f44336';
+                dot.classList.add('disconnected');
+                statusText.innerText = 'Disconnected';
+            }
+        }
+        
+        // Load initial data
+        async function loadInitialData() {
+            try {
+                const response = await fetch(`${API_URL}/map/positions`);
+                const data = await response.json();
+                if (data.success && data.data) {
+                    updateBulkPositions(data.data);
+                }
+            } catch (error) {
+                console.error('Error loading initial positions:', error);
+            }
+            
+            await loadGeofences();
+        }
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', function() {
+            if (ws) {
+                ws.close();
+            }
+            if (updateInterval) {
+                clearInterval(updateInterval);
+            }
+        });
+        
+        // Initialize everything
+        function init() {
+            initMap();
+            initWebSocket();
+            loadInitialData();
+            
+            // Set up event listeners
+            document.getElementById('btnCenter').addEventListener('click', centerMap);
+            document.getElementById('btnTrack').addEventListener('click', () => {
+                if (currentTrackedDrone) {
+                    trackDrone(currentTrackedDrone);
+                } else if (droneData.length > 0) {
+                    trackDrone(droneData[0].drone_id);
+                }
+            });
+            document.getElementById('btnHeatmap').addEventListener('click', toggleHeatmap);
+            document.getElementById('btnFullscreen').addEventListener('click', toggleFullscreen);
+            document.getElementById('togglePanelBtn').addEventListener('click', togglePanel);
+            document.getElementById('closePanelBtn').addEventListener('click', togglePanel);
+            
+            // Auto-refresh every 5 seconds
+            setInterval(() => {
+                if (droneMarkers.size > 0) {
+                    document.getElementById('droneCount').innerText = droneMarkers.size;
+                }
+            }, 5000);
+            
+            showToast('Map view loaded', 'success');
+        }
+        
+        // Export functions to global scope for HTML onclick
+        window.centerOnDrone = centerOnDrone;
+        window.trackDrone = trackDrone;
+        window.selectDrone = selectDrone;
+        
+        // Start application
+        init();
+    </script>
+</body>
+</html>

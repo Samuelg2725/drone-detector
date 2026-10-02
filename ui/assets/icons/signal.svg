@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Signal Bars -->
+    <rect x="4" y="14" width="3" height="8" rx="0.5" fill="currentColor" stroke="none"/>
+    <rect x="9" y="10" width="3" height="12" rx="0.5" fill="currentColor" stroke="none"/>
+    <rect x="14" y="6" width="3" height="16" rx="0.5" fill="currentColor" stroke="none"/>
+    <rect x="19" y="2" width="3" height="20" rx="0.5" fill="currentColor" stroke="none"/>
+    
+    <!-- Signal Waves -->
+    <path d="M4,12 Q6,9 8,12" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4"/>
+    <path d="M4,8 Q7,4 10,8" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"/>
+    <path d="M4,4 Q8,-1 12,4" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.2"/>
+</svg>

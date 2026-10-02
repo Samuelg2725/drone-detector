@@ -1,0 +1,384 @@
+{
+  "version": "2.0.0",
+  "last_updated": "2024-01-15T00:00:00Z",
+  "description": "Label mapping for drone detection training dataset - maps numerical labels to drone types and categories",
+  
+  "label_mapping": {
+    "0": {
+      "name": "noise",
+      "category": "noise",
+      "description": "Background noise, no signal present",
+      "color": "#888888",
+      "threat_level": "none",
+      "priority": 0
+    },
+    "1": {
+      "name": "dji_mavic",
+      "category": "dji",
+      "display_name": "DJI Mavic",
+      "full_name": "DJI Mavic Series",
+      "manufacturer": "DJI",
+      "description": "DJI Mavic 3, Mavic 2, Mavic Air series using OcuSync transmission",
+      "color": "#4facfe",
+      "threat_level": "medium",
+      "priority": 5,
+      "variants": ["Mavic 3", "Mavic 2 Pro", "Mavic Air 2", "Mavic Mini"]
+    },
+    "2": {
+      "name": "dji_mini",
+      "category": "dji",
+      "display_name": "DJI Mini",
+      "full_name": "DJI Mini Series",
+      "manufacturer": "DJI",
+      "description": "DJI Mini 3, Mini 2, Mini SE - lightweight consumer drones",
+      "color": "#6bc0ff",
+      "threat_level": "low",
+      "priority": 3,
+      "variants": ["Mini 3 Pro", "Mini 2", "Mini SE"]
+    },
+    "3": {
+      "name": "dji_phantom",
+      "category": "dji",
+      "display_name": "DJI Phantom",
+      "full_name": "DJI Phantom Series",
+      "manufacturer": "DJI",
+      "description": "DJI Phantom 4, Phantom 3 - professional quadcopters",
+      "color": "#2d8cff",
+      "threat_level": "medium",
+      "priority": 5,
+      "variants": ["Phantom 4 Pro", "Phantom 4", "Phantom 3"]
+    },
+    "4": {
+      "name": "fpv_analog",
+      "category": "fpv",
+      "display_name": "FPV Analog",
+      "full_name": "First Person View Analog System",
+      "manufacturer": "Generic",
+      "description": "Analog FPV video transmission - FM modulated, 5.8 GHz band",
+      "color": "#ff9800",
+      "threat_level": "low",
+      "priority": 2,
+      "variants": ["NTSC", "PAL", "TVL Standard"]
+    },
+    "5": {
+      "name": "fpv_digital",
+      "category": "fpv",
+      "display_name": "FPV Digital",
+      "full_name": "First Person View Digital System",
+      "manufacturer": "DJI, Walksnail, HDZero",
+      "description": "Digital FPV systems using OFDM modulation",
+      "color": "#ffb74d",
+      "threat_level": "medium",
+      "priority": 4,
+      "variants": ["DJI Digital FPV", "Walksnail Avatar", "HDZero"]
+    },
+    "6": {
+      "name": "autel_evo",
+      "category": "autel",
+      "display_name": "Autel EVO",
+      "full_name": "Autel EVO Series",
+      "manufacturer": "Autel Robotics",
+      "description": "Autel EVO II, EVO Lite series using Autel Link",
+      "color": "#00e5ff",
+      "threat_level": "medium",
+      "priority": 5,
+      "variants": ["EVO II Pro", "EVO Lite+", "EVO Nano"]
+    },
+    "7": {
+      "name": "skydio",
+      "category": "skydio",
+      "display_name": "Skydio",
+      "full_name": "Skydio Autonomous Drone",
+      "manufacturer": "Skydio",
+      "description": "Skydio 2, Skydio X2 - autonomous drones with Skydio Autonomy",
+      "color": "#00c853",
+      "threat_level": "medium",
+      "priority": 5,
+      "variants": ["Skydio 2", "Skydio 2+", "Skydio X2"]
+    },
+    "8": {
+      "name": "parrot_anafi",
+      "category": "parrot",
+      "display_name": "Parrot Anafi",
+      "full_name": "Parrot Anafi Series",
+      "manufacturer": "Parrot",
+      "description": "Parrot Anafi, Anafi Thermal - compact folding drones",
+      "color": "#ff6d00",
+      "threat_level": "low",
+      "priority": 3,
+      "variants": ["Anafi", "Anafi Thermal", "Anafi USA"]
+    },
+    "9": {
+      "name": "hubsan",
+      "category": "hubsan",
+      "display_name": "Hubsan",
+      "full_name": "Hubsan Drones",
+      "manufacturer": "Hubsan",
+      "description": "Hubsan Zino series - consumer drones",
+      "color": "#9c27b0",
+      "threat_level": "low",
+      "priority": 2,
+      "variants": ["Zino 2", "Zino Pro", "Zino Mini"]
+    },
+    "10": {
+      "name": "yuneec",
+      "category": "yuneec",
+      "display_name": "Yuneec",
+      "full_name": "Yuneec Drones",
+      "manufacturer": "Yuneec",
+      "description": "Yuneec Typhoon series - professional hexacopters",
+      "color": "#e91e63",
+      "threat_level": "medium",
+      "priority": 4,
+      "variants": ["Typhoon H", "Typhoon H520", "Mantis Q"]
+    },
+    "11": {
+      "name": "interference_wifi",
+      "category": "interference",
+      "display_name": "WiFi Interference",
+      "full_name": "802.11 WiFi Interference",
+      "manufacturer": "N/A",
+      "description": "WiFi signals on 2.4 GHz or 5 GHz bands",
+      "color": "#ff5722",
+      "threat_level": "none",
+      "priority": 1,
+      "variants": ["802.11b/g/n", "802.11ac", "802.11ax"]
+    },
+    "12": {
+      "name": "interference_ble",
+      "category": "interference",
+      "display_name": "Bluetooth Interference",
+      "full_name": "Bluetooth Low Energy Interference",
+      "manufacturer": "N/A",
+      "description": "Bluetooth LE signals on 2.4 GHz band",
+      "color": "#ff7043",
+      "threat_level": "none",
+      "priority": 1,
+      "variants": ["BLE 4.0", "BLE 4.2", "BLE 5.0"]
+    },
+    "13": {
+      "name": "interference_radar",
+      "category": "interference",
+      "display_name": "Radar Interference",
+      "full_name": "Radar System Interference",
+      "manufacturer": "N/A",
+      "description": "Radar signals from aircraft or weather radar",
+      "color": "#ff8a65",
+      "threat_level": "none",
+      "priority": 1,
+      "variants": ["Weather Radar", "Aircraft Radar", "Automotive Radar"]
+    }
+  },
+
+  "category_mapping": {
+    "dji": {
+      "display_name": "DJI Drones",
+      "description": "DJI consumer and professional drones",
+      "color": "#4facfe",
+      "total_labels": [1, 2, 3],
+      "threat_multiplier": 1.0
+    },
+    "autel": {
+      "display_name": "Autel Drones",
+      "description": "Autel Robotics drones",
+      "color": "#00e5ff",
+      "total_labels": [6],
+      "threat_multiplier": 1.0
+    },
+    "skydio": {
+      "display_name": "Skydio Drones",
+      "description": "Skydio autonomous drones",
+      "color": "#00c853",
+      "total_labels": [7],
+      "threat_multiplier": 1.1
+    },
+    "fpv": {
+      "display_name": "FPV Drones",
+      "description": "First Person View drones (racing/freestyle)",
+      "color": "#ff9800",
+      "total_labels": [4, 5],
+      "threat_multiplier": 0.8
+    },
+    "parrot": {
+      "display_name": "Parrot Drones",
+      "description": "Parrot consumer drones",
+      "color": "#ff6d00",
+      "total_labels": [8],
+      "threat_multiplier": 0.7
+    },
+    "hubsan": {
+      "display_name": "Hubsan Drones",
+      "description": "Hubsan consumer drones",
+      "color": "#9c27b0",
+      "total_labels": [9],
+      "threat_multiplier": 0.6
+    },
+    "yuneec": {
+      "display_name": "Yuneec Drones",
+      "description": "Yuneec professional drones",
+      "color": "#e91e63",
+      "total_labels": [10],
+      "threat_multiplier": 0.9
+    },
+    "interference": {
+      "display_name": "RF Interference",
+      "description": "Non-drone RF interference sources",
+      "color": "#ff5722",
+      "total_labels": [11, 12, 13],
+      "threat_multiplier": 0.0
+    },
+    "noise": {
+      "display_name": "Background Noise",
+      "description": "No signal - background noise only",
+      "color": "#888888",
+      "total_labels": [0],
+      "threat_multiplier": 0.0
+    }
+  },
+
+  "threat_level_mapping": {
+    "critical": {
+      "display": "CRITICAL",
+      "color": "#7b1fa2",
+      "priority": 4,
+      "score": 100,
+      "action": "emergency_response"
+    },
+    "high": {
+      "display": "HIGH",
+      "color": "#f44336",
+      "priority": 3,
+      "score": 75,
+      "action": "immediate_notification"
+    },
+    "medium": {
+      "display": "MEDIUM",
+      "color": "#ff9800",
+      "priority": 2,
+      "score": 50,
+      "action": "monitor_and_alert"
+    },
+    "low": {
+      "display": "LOW",
+      "color": "#4caf50",
+      "priority": 1,
+      "score": 25,
+      "action": "log_only"
+    },
+    "none": {
+      "display": "NONE",
+      "color": "#888888",
+      "priority": 0,
+      "score": 0,
+      "action": "ignore"
+    }
+  },
+
+  "training_statistics": {
+    "total_samples": 12500,
+    "samples_per_class": {
+      "noise": 1200,
+      "dji_mavic": 1100,
+      "dji_mini": 950,
+      "dji_phantom": 1050,
+      "fpv_analog": 900,
+      "fpv_digital": 850,
+      "autel_evo": 1000,
+      "skydio": 800,
+      "parrot_anafi": 750,
+      "hubsan": 700,
+      "yuneec": 650,
+      "interference_wifi": 950,
+      "interference_ble": 850,
+      "interference_radar": 750
+    },
+    "dataset_split": {
+      "training": 0.7,
+      "validation": 0.15,
+      "test": 0.15
+    }
+  },
+
+  "data_sources": {
+    "recorded_iq": {
+      "description": "Real IQ recordings from SDR hardware",
+      "percentage": 65,
+      "sources": ["HackRF One", "RTL-SDR", "ADALM-PLUTO"]
+    },
+    "synthetic": {
+      "description": "Synthetically generated signals",
+      "percentage": 25,
+      "purpose": "Augmentation and edge cases"
+    },
+    "public_datasets": {
+      "description": "Publicly available drone RF datasets",
+      "percentage": 10,
+      "sources": ["SigMF", "RF fingerprinting datasets"]
+    }
+  },
+
+  "augmentation_techniques": {
+    "noise_injection": {
+      "enabled": true,
+      "snr_range": [10, 30]
+    },
+    "frequency_shift": {
+      "enabled": true,
+      "max_shift_hz": 100000
+    },
+    "time_stretch": {
+      "enabled": true,
+      "stretch_range": [0.9, 1.1]
+    },
+    "amplitude_scaling": {
+      "enabled": true,
+      "scale_range": [0.8, 1.2]
+    },
+    "phase_rotation": {
+      "enabled": true,
+      "max_rotation_deg": 45
+    }
+  },
+
+  "validation_metrics": {
+    "accuracy": 0.942,
+    "precision_macro": 0.918,
+    "recall_macro": 0.921,
+    "f1_macro": 0.919,
+    "confusion_matrix_available": true
+  },
+
+  "class_weights": {
+    "0": 0.8,
+    "1": 1.0,
+    "2": 1.0,
+    "3": 1.0,
+    "4": 0.9,
+    "5": 0.9,
+    "6": 1.0,
+    "7": 1.1,
+    "8": 0.9,
+    "9": 0.8,
+    "10": 0.9,
+    "11": 0.7,
+    "12": 0.7,
+    "13": 0.8
+  },
+
+  "color_palette": {
+    "noise": "#888888",
+    "dji_mavic": "#4facfe",
+    "dji_mini": "#6bc0ff",
+    "dji_phantom": "#2d8cff",
+    "fpv_analog": "#ff9800",
+    "fpv_digital": "#ffb74d",
+    "autel_evo": "#00e5ff",
+    "skydio": "#00c853",
+    "parrot_anafi": "#ff6d00",
+    "hubsan": "#9c27b0",
+    "yuneec": "#e91e63",
+    "interference_wifi": "#ff5722",
+    "interference_ble": "#ff7043",
+    "interference_radar": "#ff8a65"
+  }
+}

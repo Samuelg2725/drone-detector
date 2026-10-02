@@ -1,0 +1,16 @@
+# config/system.yaml (updated with mock section)
+system:
+  mode: "live"                    # live, replay, mock, or test
+  log_level: "INFO"
+  
+hardware:
+  type: "auto"                    # auto, hackrf, mock
+  auto_detect: true
+  mock:
+    enabled: false                # Set to true for mock mode
+    synthetic_mode: true
+    simulate_latency_ms: 5
+    auto_inject: true
+    inject_probability: 0.3
+
+# Rest of your existing config...

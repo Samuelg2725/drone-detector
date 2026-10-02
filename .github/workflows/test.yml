@@ -1,0 +1,642 @@
+name: Test Runner
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - feature/*
+      - bugfix/*
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+    inputs:
+      test_suite:
+        description: 'Test suite to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - unit
+          - integration
+          - performance
+          - e2e
+      parallel_runs:
+        description: 'Number of parallel runs'
+        required: false
+        default: '4'
+        type: string
+
+# Environment variables
+env:
+  PYTHON_VERSION: '3.11'
+  POETRY_VERSION: '1.7.1'
+  TEST_RESULTS_DIR: test-results
+
+jobs:
+  # ============================================================================
+  # Test Matrix Setup
+  # ============================================================================
+  setup:
+    name: Setup Test Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      test_groups: ${{ steps.set-matrix.outputs.test_groups }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set test matrix
+        id: set-matrix
+        run: |
+          if [ "${{ github.event.inputs.test_suite }}" == "all" ] || [ "${{ github.event.inputs.test_suite }}" == "" ]; then
+            echo 'test_groups=["unit", "integration", "performance", "e2e"]' >> $GITHUB_OUTPUT
+          else
+            echo 'test_groups=["${{ github.event.inputs.test_suite }}"]' >> $GITHUB_OUTPUT
+          fi
+
+  # ============================================================================
+  # Unit Tests
+  # ============================================================================
+  unit-tests:
+    name: Unit Tests
+    runs-on: ${{ matrix.os }}
+    needs: setup
+    if: contains(needs.setup.outputs.test_groups, 'unit')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.11', '3.12']
+        
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfftw3-dev libhackrf-dev librtlsdr-dev
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -e .
+          
+      - name: Run unit tests
+        run: |
+          pytest tests/unit/ \
+            -v \
+            --cov=app \
+            --cov=domain \
+            --cov=infrastructure \
+            --cov-report=xml \
+            --cov-report=html \
+            --junitxml=${{ env.TEST_RESULTS_DIR }}/unit-${{ matrix.os }}-py${{ matrix.python-version }}.xml \
+            --tb=short \
+            --numprocesses auto \
+            --dist loadfile \
+            -m "not slow and not hardware"
+        env:
+          COVERAGE_FILE: .coverage.${{ matrix.os }}.${{ matrix.python-version }}
+          
+      - name: Upload unit test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: |
+            ${{ env.TEST_RESULTS_DIR }}/unit-*.xml
+            htmlcov/
+            .coverage.*
+            
+      - name: Store coverage data
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-data-unit-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: .coverage.*
+
+  # ============================================================================
+  # Integration Tests
+  # ============================================================================
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: setup
+    if: contains(needs.setup.outputs.test_groups, 'integration')
+    timeout-minutes: 30
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: drone_test
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          
+      postgres-replica:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: drone_test
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          
+      redis:
+        image: redis:7.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          
+      redis-sentinel:
+        image: redis:7.2-alpine
+        command: redis-sentinel /sentinel.conf
+        ports:
+          - 26379:26379
+        volumes:
+          - ./docker/redis/sentinel.conf:/sentinel.conf
+          
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+        ports:
+          - 9000:9000
+          - 9001:9001
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 3
+          
+      kafka:
+        image: confluentinc/cp-kafka:latest
+        ports:
+          - 9092:9092
+        env:
+          KAFKA_BROKER_ID: 1
+          KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          
+      zookeeper:
+        image: confluentinc/cp-zookeeper:latest
+        ports:
+          - 2181:2181
+        env:
+          ZOOKEEPER_CLIENT_PORT: 2181
+          ZOOKEEPER_TICK_TIME: 2000
+          
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -e .[database,api,kafka]
+          
+      - name: Setup MinIO buckets
+        run: |
+          pip install minio
+          python scripts/setup_minio.py \
+            --endpoint localhost:9000 \
+            --access-key minioadmin \
+            --secret-key minioadmin123
+          
+      - name: Run database migrations
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/drone_test
+        run: |
+          python scripts/migrate.py upgrade head
+          
+      - name: Seed test data
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/drone_test
+        run: |
+          python scripts/seed_test_data.py --size small
+          
+      - name: Run integration tests
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/drone_test
+          DATABASE_REPLICA_URL: postgresql://test_user:test_password@localhost:5433/drone_test
+          REDIS_URL: redis://localhost:6379
+          REDIS_SENTINEL_URL: redis://localhost:26379
+          MINIO_ENDPOINT: localhost:9000
+          MINIO_ACCESS_KEY: minioadmin
+          MINIO_SECRET_KEY: minioadmin123
+          KAFKA_BOOTSTRAP_SERVERS: localhost:9092
+          USE_MOCK_HARDWARE: "true"
+          TESTING: "true"
+        run: |
+          pytest tests/integration/ \
+            -v \
+            --cov=app \
+            --cov=domain \
+            --cov=infrastructure \
+            --cov-append \
+            --junitxml=${{ env.TEST_RESULTS_DIR }}/integration.xml \
+            --tb=short \
+            --strict-markers \
+            -m "integration"
+            
+      - name: Upload integration test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: |
+            ${{ env.TEST_RESULTS_DIR }}/integration.xml
+            .coverage.*
+            
+      - name: Store integration coverage data
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-data-integration
+          path: .coverage.*
+
+  # ============================================================================
+  # Performance Tests
+  # ============================================================================
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    needs: setup
+    if: contains(needs.setup.outputs.test_groups, 'performance')
+    timeout-minutes: 60
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -e .[all]
+          
+      - name: Run performance benchmarks
+        env:
+          USE_MOCK_HARDWARE: "true"
+          BENCHMARK_CI: "true"
+        run: |
+          pytest tests/performance/ \
+            -v \
+            --benchmark-only \
+            --benchmark-autosave \
+            --benchmark-histogram \
+            --benchmark-compare \
+            --benchmark-columns=min,max,mean,stddev,rounds,iterations \
+            --benchmark-storage=file://./benchmarks \
+            --benchmark-group-by=param:test_case
+          
+      - name: Compare with baseline
+        run: |
+          python scripts/compare_benchmarks.py \
+            --current benchmarks/ \
+            --baseline baseline-benchmarks.json \
+            --threshold 10 \
+            --output performance-report.md
+          
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: |
+            benchmarks/
+            performance-report.md
+            .benchmarks/
+            
+      - name: Store performance metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-metrics
+          path: performance-metrics.json
+
+  # ============================================================================
+  # End-to-End Tests
+  # ============================================================================
+  e2e-tests:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    needs: setup
+    if: contains(needs.setup.outputs.test_groups, 'e2e')
+    timeout-minutes: 45
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -e .[all]
+          npm ci
+          
+      - name: Start application services
+        run: |
+          docker-compose -f docker-compose.e2e.yml up -d
+          sleep 30
+          
+      - name: Run database migrations
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/drone_test
+        run: |
+          python scripts/migrate.py upgrade head
+          
+      - name: Run end-to-end tests
+        env:
+          API_BASE_URL: http://localhost:8888
+          WEBSOCKET_URL: ws://localhost:8889
+          USE_MOCK_HARDWARE: "true"
+          E2E_TESTING: "true"
+        run: |
+          pytest tests/e2e/ \
+            -v \
+            --tb=short \
+            --capture=no \
+            --html=${{ env.TEST_RESULTS_DIR }}/e2e-report.html \
+            --self-contained-html \
+            --maxfail=5 \
+            --strict-markers \
+            -m "e2e"
+            
+      - name: Run UI tests (Playwright)
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:e2e:ui
+          
+      - name: Generate test report
+        run: |
+          python scripts/generate_test_report.py \
+            --input ${{ env.TEST_RESULTS_DIR }} \
+            --output test-report.json
+          
+      - name: Upload e2e test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: |
+            ${{ env.TEST_RESULTS_DIR }}/e2e-report.html
+            test-report.json
+            test-results/
+            playwright-report/
+            
+      - name: Upload video recordings of failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-videos
+          path: test-results/**/*.webm
+
+  # ============================================================================
+  # Load Tests
+  # ============================================================================
+  load-tests:
+    name: Load Tests
+    runs-on: ubuntu-latest
+    needs: setup
+    if: contains(needs.setup.outputs.test_groups, 'performance') && github.event_name != 'pull_request'
+    timeout-minutes: 120
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install locust
+          
+      - name: Start application with scaling
+        run: |
+          docker-compose -f docker-compose.load.yml up -d --scale api=5 --scale worker=10
+          sleep 60
+          
+      - name: Run load tests
+        run: |
+          locust -f tests/performance/locustfile.py \
+            --host=http://localhost:8888 \
+            --headless \
+            --users 1000 \
+            --spawn-rate 10 \
+            --run-time 30m \
+            --html load-test-report.html \
+            --json load-test-results.json
+          
+      - name: Analyze load test results
+        run: |
+          python scripts/analyze_load_test.py \
+            --input load-test-results.json \
+            --threshold 500 \
+            --output load-test-analysis.md
+          
+      - name: Upload load test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results
+          path: |
+            load-test-report.html
+            load-test-results.json
+            load-test-analysis.md
+
+  # ============================================================================
+  # Test Coverage Aggregation
+  # ============================================================================
+  coverage:
+    name: Test Coverage
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests]
+    if: always()
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install coverage
+        run: pip install coverage
+        
+      - name: Download coverage data
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-data-*
+          path: coverage-data
+          merge-multiple: true
+          
+      - name: Combine coverage reports
+        run: |
+          coverage combine coverage-data/.coverage.*
+          coverage xml -o coverage.xml
+          coverage html -d coverage-html
+          coverage report --fail-under=80
+          
+      - name: Upload combined coverage report
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          flags: combined
+          name: drone-detector-coverage
+          fail_ci_if_error: true
+          verbose: true
+          
+      - name: Upload coverage HTML report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: coverage-html/
+
+  # ============================================================================
+  # Test Summary
+  # ============================================================================
+  summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, performance-tests, e2e-tests, coverage]
+    if: always()
+    
+    steps:
+      - name: Download all test results
+        uses: actions/download-artifact@v4
+        with:
+          path: all-results
+          
+      - name: Generate summary report
+        run: |
+          python scripts/generate_test_summary.py \
+            --input all-results/ \
+            --output test-summary.md \
+            --format markdown
+          
+      - name: Upload summary report
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-summary
+          path: test-summary.md
+          
+      - name: Post summary to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('test-summary.md', 'utf8');
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🧪 Test Results\n\n${summary}`
+            });
+            
+      - name: Check test status
+        id: check
+        run: |
+          if [ "${{ needs.unit-tests.result }}" == "failure" ] || \
+             [ "${{ needs.integration-tests.result }}" == "failure" ] || \
+             [ "${{ needs.coverage.result }}" == "failure" ]; then
+            echo "status=failure" >> $GITHUB_OUTPUT
+          else
+            echo "status=success" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Fail workflow if tests failed
+        if: steps.check.outputs.status == 'failure'
+        run: exit 1
+
+  # ============================================================================
+  # Notification
+  # ============================================================================
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    needs: [summary]
+    if: always() && github.event_name != 'pull_request'
+    
+    steps:
+      - name: Send Slack notification
+        if: always()
+        uses: slackapi/slack-github-action@v1.24
+        with:
+          payload: |
+            {
+              "text": "${{ needs.summary.result == 'success' && '✅' || '❌' }} Test Run Completed",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "${{ needs.summary.result == 'success' && '✅' || '❌' }} *Test Run Completed*\nRepository: ${{ github.repository }}\nBranch: ${{ github.ref_name }}\nCommit: ${{ github.sha }}\nStatus: ${{ needs.summary.result }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

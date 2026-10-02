@@ -1,0 +1,550 @@
+#!/usr/bin/env python3
+"""
+Generate mock IQ data for FPV Analog video transmission at 5.8 GHz
+
+This script generates realistic synthetic IQ data that simulates
+analog FPV (First Person View) video transmission characteristics
+for testing and development of the drone detection system.
+"""
+
+import numpy as np
+import json
+from pathlib import Path
+from datetime import datetime
+from scipy import signal
+
+# ============================================================================
+# FPV Analog Signal Parameters
+# ============================================================================
+
+class FPVAnalogSignalGenerator:
+    """Generate realistic FPV Analog video signal at 5.8 GHz"""
+    
+    def __init__(self):
+        # FPV Analog 5.8 GHz parameters
+        self.sample_rate = 10e6  # 10 MHz (sufficient for 8 MHz video)
+        self.center_freq = 5.800e9  # 5.8 GHz (Raceband 8)
+        self.bandwidth = 8e6  # 8 MHz (standard analog video bandwidth)
+        self.modulation = "FM"  # Frequency Modulation
+        self.video_standard = "NTSC"  # NTSC or PAL
+        
+        # Video signal parameters
+        self.video_line_rate = 15750  # Hz (NTSC)
+        self.video_field_rate = 60  # Hz (NTSC)
+        self.video_deviation = 4.5e6  # 4.5 MHz peak deviation
+        self.audio_deviation = 25e3  # 25 kHz audio deviation
+        
+        # Signal characteristics
+        self.snr_db = 12  # Lower SNR for analog systems
+        self.doppler_shift = 30  # Hz (simulating movement)
+        self.multipath = True  # Enable multipath simulation
+        
+    def generate_video_signal(self, num_samples):
+        """Generate composite video signal (luminance + sync + color)"""
+        t = np.arange(num_samples) / self.sample_rate
+        
+        # Generate horizontal sync pulses (15.75 kHz for NTSC)
+        hsync = self.generate_pulse_train(t, self.video_line_rate, 0.08)  # 8% width
+        
+        # Generate vertical sync (60 Hz for NTSC)
+        vsync = self.generate_pulse_train(t, self.video_field_rate, 0.05)  # 5% width
+        
+        # Generate video content (simulated camera feed)
+        video_content = self.generate_video_content(t)
+        
+        # Generate color burst (3.58 MHz for NTSC)
+        color_burst = 0.3 * np.sin(2 * np.pi * 3.579545e6 * t)
+        color_burst = color_burst * self.generate_gate(t, self.video_line_rate, 0.1)
+        
+        # Composite video signal
+        video_signal = video_content + hsync + vsync + color_burst
+        
+        # Normalize to [-1, 1] range
+        video_signal = np.clip(video_signal, -1, 1)
+        
+        return video_signal
+    
+    def generate_audio_signal(self, num_samples):
+        """Generate audio subcarrier signal (4.5 MHz for NTSC)"""
+        t = np.arange(num_samples) / self.sample_rate
+        
+        # Audio subcarrier at 4.5 MHz
+        audio_carrier = np.sin(2 * np.pi * 4.5e6 * t)
+        
+        # Simulate simple audio content
+        audio_content = 0.5 * np.sin(2 * np.pi * 1000 * t)  # 1 kHz tone
+        audio_content += 0.3 * np.sin(2 * np.pi * 2000 * t)  # 2 kHz tone
+        
+        # FM modulate audio onto subcarrier
+        audio_deviation = 25e3  # 25 kHz deviation
+        audio_phase = 2 * np.pi * audio_deviation * np.cumsum(audio_content) / self.sample_rate
+        audio_signal = np.sin(audio_carrier + audio_phase)
+        
+        return audio_signal * 0.3  # Attenuate audio level
+    
+    def generate_pulse_train(self, t, frequency, duty_cycle):
+        """Generate pulse train at specified frequency"""
+        period = 1.0 / frequency
+        phase = (t % period) / period
+        pulse = (phase < duty_cycle).astype(float)
+        return pulse
+    
+    def generate_gate(self, t, frequency, gate_width):
+        """Generate gate signal for color burst"""
+        period = 1.0 / frequency
+        phase = (t % period) / period
+        gate = (phase > 0.8) & (phase < (0.8 + gate_width))
+        return gate.astype(float)
+    
+    def generate_video_content(self, t):
+        """Generate simulated video content"""
+        # Simulate moving scene
+        # Basic pattern: moving bars and gradient
+        bar_pattern = 0.5 * (1 + np.sin(2 * np.pi * 10000 * t))
+        gradient = t % (1/60) * 60  # Ramp over one field
+        gradient = 2 * gradient - 1  # Scale to [-1, 1]
+        
+        # Combine patterns
+        video = 0.7 * bar_pattern + 0.3 * gradient
+        
+        # Add some texture (simulated noise)
+        texture = 0.1 * np.random.randn(len(t))
+        video = video + texture
+        
+        return np.clip(video, -1, 1)
+    
+    def generate_signal(self, duration_seconds=10):
+        """Generate complete FPV analog signal for given duration"""
+        num_samples = int(self.sample_rate * duration_seconds)
+        
+        # Generate video signal
+        video_signal = self.generate_video_signal(num_samples)
+        
+        # Generate audio signal
+        audio_signal = self.generate_audio_signal(num_samples)
+        
+        # FM modulate video onto carrier
+        t = np.arange(num_samples) / self.sample_rate
+        
+        # Video modulation (peak deviation 4.5 MHz)
+        video_phase = 2 * np.pi * self.video_deviation * np.cumsum(video_signal) / self.sample_rate
+        
+        # Audio modulation (added to video)
+        audio_phase = 2 * np.pi * self.audio_deviation * np.cumsum(audio_signal) / self.sample_rate
+        
+        # Composite FM signal
+        baseband = video_signal + 0.3 * audio_signal
+        phase = 2 * np.pi * self.video_deviation * np.cumsum(baseband) / self.sample_rate
+        
+        # Create IQ signal
+        signal = np.exp(1j * phase)
+        
+        # Apply Doppler shift
+        doppler = np.exp(1j * 2 * np.pi * self.doppler_shift * t)
+        signal = signal * doppler
+        
+        # Apply multipath effects (common in urban environments)
+        if self.multipath:
+            signal = self.apply_multipath(signal, self.sample_rate)
+        
+        # Add frequency drift (simulate temperature effects)
+        freq_drift = 100 * t  # 100 Hz/s drift
+        drift_phase = np.exp(1j * 2 * np.pi * np.cumsum(freq_drift) / self.sample_rate)
+        signal = signal * drift_phase
+        
+        # Normalize signal power
+        signal = signal / np.sqrt(np.mean(np.abs(signal)**2))
+        
+        # Add noise (characteristic of analog systems)
+        noise_power = 10 ** (-self.snr_db / 10)
+        noise = np.sqrt(noise_power/2) * (np.random.randn(num_samples) + 1j * np.random.randn(num_samples))
+        signal = signal + noise
+        
+        # Add impulse noise (sparkles - characteristic of analog video)
+        impulse_rate = int(0.01 * num_samples)  # 1% impulse rate
+        impulse_indices = np.random.choice(num_samples, impulse_rate, replace=False)
+        impulse_magnitude = 0.5
+        signal[impulse_indices] += impulse_magnitude * np.exp(1j * 2 * np.pi * np.random.rand(impulse_rate))
+        
+        return signal.astype(np.complex64)
+    
+    def apply_multipath(self, signal, sample_rate):
+        """Apply multipath fading effects"""
+        # Two-path channel model
+        delay_samples = int(0.5e-6 * sample_rate)  # 0.5 microsecond delay
+        attenuation = 0.5  # 6 dB attenuation
+        
+        if delay_samples < len(signal):
+            multipath = np.zeros(len(signal), dtype=np.complex128)
+            multipath[delay_samples:] = attenuation * signal[:-delay_samples]
+            signal = signal + multipath
+        
+        return signal
+
+
+# ============================================================================
+# FPV Channel Frequencies (5.8 GHz bands)
+# ============================================================================
+
+FPV_CHANNELS = {
+    # Raceband (most common)
+    'raceband': {
+        1: 5.658e9, 2: 5.670e9, 3: 5.682e9, 4: 5.694e9,
+        5: 5.706e9, 6: 5.718e9, 7: 5.730e9, 8: 5.742e9
+    },
+    # FatShark band
+    'fatshark': {
+        1: 5.740e9, 2: 5.760e9, 3: 5.780e9, 4: 5.800e9,
+        5: 5.820e9, 6: 5.840e9, 7: 5.860e9, 8: 5.880e9
+    },
+    # Band A
+    'band_a': {
+        1: 5.865e9, 2: 5.845e9, 3: 5.825e9, 4: 5.805e9,
+        5: 5.785e9, 6: 5.765e9, 7: 5.745e9, 8: 5.725e9
+    },
+    # Band B
+    'band_b': {
+        1: 5.733e9, 2: 5.752e9, 3: 5.771e9, 4: 5.790e9,
+        5: 5.809e9, 6: 5.828e9, 7: 5.847e9, 8: 5.866e9
+    },
+    # Band E
+    'band_e': {
+        1: 5.705e9, 2: 5.685e9, 3: 5.665e9, 4: 5.645e9,
+        5: 5.885e9, 6: 5.905e9, 7: 5.925e9, 8: 5.945e9
+    }
+}
+
+
+# ============================================================================
+# Generate and Save IQ Data
+# ============================================================================
+
+def generate_fpv_analog_file(duration_seconds=30, output_path=None, 
+                              channel_freq=5.800e9, video_standard="NTSC"):
+    """
+    Generate FPV analog IQ data file
+    
+    Args:
+        duration_seconds: Duration of recording in seconds
+        output_path: Output file path (uses default if None)
+        channel_freq: Center frequency in Hz
+        video_standard: Video standard ("NTSC" or "PAL")
+    """
+    print("=" * 60)
+    print("FPV Analog 5.8 GHz IQ Data Generator")
+    print("=" * 60)
+    
+    # Create generator
+    generator = FPVAnalogSignalGenerator()
+    generator.center_freq = channel_freq
+    generator.video_standard = video_standard
+    
+    # Adjust parameters for PAL if needed
+    if video_standard == "PAL":
+        generator.video_line_rate = 15625  # Hz
+        generator.video_field_rate = 50  # Hz
+        generator.video_deviation = 5.0e6  # 5 MHz deviation
+    
+    print(f"\nConfiguration:")
+    print(f"  Sample Rate: {generator.sample_rate/1e6:.1f} MHz")
+    print(f"  Center Frequency: {generator.center_freq/1e9:.3f} GHz")
+    print(f"  Bandwidth: {generator.bandwidth/1e6:.1f} MHz")
+    print(f"  Duration: {duration_seconds} seconds")
+    print(f"  Modulation: {generator.modulation}")
+    print(f"  Video Standard: {generator.video_standard}")
+    print(f"  SNR: {generator.snr_db} dB")
+    
+    # Generate signal
+    print("\nGenerating FPV analog video signal...")
+    signal = generator.generate_signal(duration_seconds)
+    
+    print(f"  Samples generated: {len(signal):,}")
+    print(f"  Data type: {signal.dtype}")
+    print(f"  Memory usage: {len(signal) * 8 / (1024**2):.2f} MB")
+    
+    # Set output path
+    if output_path is None:
+        output_path = Path("data/iq/mock/fpv_analog_5.8g.iq")
+    
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Save to file
+    print(f"\nSaving to: {output_path}")
+    signal.tofile(output_path)
+    
+    file_size = output_path.stat().st_size
+    print(f"  File size: {file_size:,} bytes ({file_size / (1024**2):.2f} MB)")
+    
+    # Save metadata
+    metadata = {
+        'signal_type': 'FPV Analog Video',
+        'frequency_band': '5.8 GHz',
+        'center_frequency': generator.center_freq,
+        'sample_rate': generator.sample_rate,
+        'duration_seconds': duration_seconds,
+        'num_samples': len(signal),
+        'modulation': generator.modulation,
+        'bandwidth': generator.bandwidth,
+        'video_standard': generator.video_standard,
+        'video_line_rate': generator.video_line_rate,
+        'video_field_rate': generator.video_field_rate,
+        'video_deviation_hz': generator.video_deviation,
+        'snr_db': generator.snr_db,
+        'multipath_enabled': generator.multipath,
+        'generated_by': 'FPVAnalogSignalGenerator',
+        'generation_date': datetime.now().isoformat(),
+        'notes': 'Simulates analog FPV video transmission with audio subcarrier'
+    }
+    
+    metadata_path = output_path.with_suffix('.json')
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
+    print(f"  Metadata saved to: {metadata_path}")
+    
+    # Calculate statistics
+    print("\nSignal Statistics:")
+    print(f"  Mean: {np.mean(signal):.6f}")
+    print(f"  Std Dev: {np.std(signal):.6f}")
+    print(f"  Max Magnitude: {np.max(np.abs(signal)):.6f}")
+    print(f"  Min Magnitude: {np.min(np.abs(signal)):.6f}")
+    print(f"  Mean Power: {10*np.log10(np.mean(np.abs(signal)**2) + 1e-12):.2f} dB")
+    
+    # Frequency analysis
+    fft_data = np.fft.fftshift(np.fft.fft(signal))
+    fft_mag = np.abs(fft_data)
+    freqs = np.fft.fftfreq(len(signal), 1/generator.sample_rate)
+    freqs = np.fft.fftshift(freqs)
+    
+    print(f"\nFrequency Domain Statistics:")
+    print(f"  Peak Frequency: {freqs[np.argmax(fft_mag)]/1e6:.2f} MHz offset")
+    
+    # Video content analysis
+    # Demodulate to get video signal (approximate)
+    phase = np.unwrap(np.angle(signal))
+    video_demod = np.diff(phase) * generator.sample_rate / (2 * np.pi * generator.video_deviation)
+    
+    print(f"\nVideo Statistics:")
+    print(f"  Video Mean: {np.mean(video_demod):.4f}")
+    print(f"  Video Std: {np.std(video_demod):.4f}")
+    print(f"  Video Dynamic Range: {np.max(video_demod) - np.min(video_demod):.2f}")
+    
+    return signal
+
+
+# ============================================================================
+# Generate Multiple Channel Variants
+# ============================================================================
+
+def generate_all_fpv_channels(duration=10, output_dir="data/iq/mock"):
+    """
+    Generate FPV analog signals for all common channels
+    
+    Args:
+        duration: Duration in seconds for each variant
+        output_dir: Output directory
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    print("\n" + "=" * 60)
+    print("Generating All FPV Analog Channels")
+    print("=" * 60)
+    
+    for band_name, channels in FPV_CHANNELS.items():
+        for ch_num, freq in channels.items():
+            output_path = output_dir / f"fpv_analog_{band_name}_ch{ch_num}.iq"
+            print(f"\nGenerating {band_name} CH{ch_num} at {freq/1e9:.3f} GHz")
+            
+            generate_fpv_analog_file(
+                duration_seconds=duration,
+                output_path=output_path,
+                channel_freq=freq
+            )
+    
+    print("\n" + "=" * 60)
+    print("All FPV analog variants generated successfully!")
+    print("=" * 60)
+
+
+# ============================================================================
+# Generate Signal with Different SNR Levels
+# ============================================================================
+
+def generate_fpv_with_varying_snr(duration=10, output_dir="data/iq/mock"):
+    """
+    Generate FPV analog signals with different SNR levels for testing
+    
+    Args:
+        duration: Duration in seconds
+        output_dir: Output directory
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    snr_levels = [6, 9, 12, 15, 18, 21]  # dB
+    
+    print("\n" + "=" * 60)
+    print("Generating FPV Signals with Varying SNR")
+    print("=" * 60)
+    
+    for snr in snr_levels:
+        print(f"\nGenerating signal with SNR = {snr} dB")
+        
+        generator = FPVAnalogSignalGenerator()
+        generator.snr_db = snr
+        
+        signal = generator.generate_signal(duration)
+        
+        output_path = output_dir / f"fpv_analog_snr_{snr}db.iq"
+        signal.tofile(output_path)
+        
+        print(f"  Saved: {output_path}")
+    
+    print("\n" + "=" * 60)
+    print("All SNR variants generated successfully!")
+    print("=" * 60)
+
+
+# ============================================================================
+# Utility Functions
+# ============================================================================
+
+def verify_iq_file(file_path):
+    """Verify integrity of generated IQ file"""
+    import hashlib
+    
+    file_path = Path(file_path)
+    
+    if not file_path.exists():
+        print(f"File not found: {file_path}")
+        return False
+    
+    # Check file size
+    file_size = file_path.stat().st_size
+    samples = file_size // 8  # 8 bytes per complex64
+    
+    print(f"\nVerifying: {file_path.name}")
+    print(f"  File size: {file_size:,} bytes")
+    print(f"  Samples: {samples:,}")
+    
+    # Load and verify data
+    data = np.fromfile(file_path, dtype=np.complex64)
+    
+    print(f"  Data shape: {data.shape}")
+    print(f"  Mean: {np.mean(data):.6f}")
+    print(f"  Std: {np.std(data):.6f}")
+    print(f"  Min/Max: {np.min(data):.6f} / {np.max(data):.6f}")
+    
+    # Check for NaN or Inf
+    if np.any(np.isnan(data)):
+        print("  [ERROR] NaN values detected!")
+        return False
+    
+    if np.any(np.isinf(data)):
+        print("  [ERROR] Infinite values detected!")
+        return False
+    
+    print("  [OK] File verification passed")
+    
+    return True
+
+
+def plot_spectrum(file_path, sample_rate=10e6):
+    """Plot spectrum of generated IQ file"""
+    import matplotlib.pyplot as plt
+    
+    data = np.fromfile(file_path, dtype=np.complex64)
+    
+    # Compute FFT
+    fft_data = np.fft.fftshift(np.fft.fft(data))
+    fft_mag = 20 * np.log10(np.abs(fft_data) + 1e-12)
+    freqs = np.fft.fftfreq(len(data), 1/sample_rate)
+    freqs = np.fft.fftshift(freqs)
+    
+    # Plot
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+    
+    # Spectrum
+    ax1.plot(freqs / 1e6, fft_mag)
+    ax1.set_xlabel('Frequency (MHz)')
+    ax1.set_ylabel('Magnitude (dB)')
+    ax1.set_title(f'Spectrum of {file_path.name}')
+    ax1.grid(True, alpha=0.3)
+    ax1.set_xlim([-10, 10])  # Show ±10 MHz around center
+    
+    # Waterfall (spectrogram)
+    f, t, Sxx = signal.spectrogram(data, fs=sample_rate, nperseg=1024, noverlap=512)
+    Sxx_db = 10 * np.log10(Sxx + 1e-12)
+    
+    im = ax2.pcolormesh(t, f/1e6, Sxx_db, shading='gouraud', cmap='viridis')
+    ax2.set_xlabel('Time (s)')
+    ax2.set_ylabel('Frequency (MHz)')
+    ax2.set_title('Spectrogram')
+    plt.colorbar(im, ax=ax2, label='Power (dB)')
+    
+    plt.tight_layout()
+    plt.show()
+
+
+# ============================================================================
+# Main Function
+# ============================================================================
+
+def main():
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Generate FPV Analog 5.8 GHz mock IQ data for testing"
+    )
+    parser.add_argument("--duration", type=int, default=10, 
+                        help="Duration in seconds (default: 10)")
+    parser.add_argument("--output-dir", type=str, default="data/iq/mock", 
+                        help="Output directory (default: data/iq/mock)")
+    parser.add_argument("--channel", type=float, default=5.800e9,
+                        help="Center frequency in Hz (default: 5.800e9)")
+    parser.add_argument("--video", type=str, default="NTSC",
+                        choices=["NTSC", "PAL"],
+                        help="Video standard (default: NTSC)")
+    parser.add_argument("--all-channels", action="store_true",
+                        help="Generate all FPV channels")
+    parser.add_argument("--snr-variants", action="store_true",
+                        help="Generate signals with varying SNR")
+    parser.add_argument("--verify", action="store_true",
+                        help="Verify generated files")
+    parser.add_argument("--plot", action="store_true",
+                        help="Plot spectrum after generation")
+    
+    args = parser.parse_args()
+    
+    if args.all_channels:
+        generate_all_fpv_channels(duration=args.duration, output_dir=args.output_dir)
+    
+    elif args.snr_variants:
+        generate_fpv_with_varying_snr(duration=args.duration, output_dir=args.output_dir)
+    
+    else:
+        # Generate single file
+        generate_fpv_analog_file(
+            duration_seconds=args.duration,
+            output_path=Path(args.output_dir) / "fpv_analog_5.8g.iq",
+            channel_freq=args.channel,
+            video_standard=args.video
+        )
+    
+    # Verify files
+    if args.verify:
+        output_dir = Path(args.output_dir)
+        for iq_file in output_dir.glob("fpv_analog*.iq"):
+            verify_iq_file(iq_file)
+    
+    # Plot spectrum
+    if args.plot:
+        output_path = Path(args.output_dir) / "fpv_analog_5.8g.iq"
+        if output_path.exists():
+            plot_spectrum(output_path, sample_rate=10e6)
+
+
+if __name__ == "__main__":
+    main()

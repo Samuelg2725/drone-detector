@@ -1,0 +1,240 @@
+{
+    "name": "Drone Detector Development Container",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "..",
+        "args": {
+            "VARIANT": "3.11",
+            "INSTALL_NODE": "true",
+            "NODE_VERSION": "lts",
+            "INSTALL_JUPYTER": "true"
+        }
+    },
+    
+    // Customizations for VS Code
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                // Python Development
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "ms-python.debugpy",
+                "ms-python.pylint",
+                "ms-python.flake8",
+                "ms-python.mypy-type-checker",
+                "ms-python.black-formatter",
+                "ms-python.isort",
+                "kevinrose.vsc-python-indent",
+                
+                // Docker & Container
+                "ms-azuretools.vscode-docker",
+                "redhat.vscode-yaml",
+                "timonwong.shellcheck",
+                
+                // Git
+                "eamodio.gitlens",
+                "mhutchie.git-graph",
+                "donjayamanne.githistory",
+                "codezombiech.gitignore",
+                
+                // Database
+                "cweijan.vscode-postgresql-client2",
+                "mtxr.sqltools",
+                "mtxr.sqltools-driver-pg",
+                
+                // Testing
+                "littlefoxteam.vscode-python-test-adapter",
+                "hbenl.vscode-test-explorer",
+                "ryanluker.vscode-coverage-gutters",
+                
+                // Documentation
+                "yzhang.markdown-all-in-one",
+                "davidanson.vscode-markdownlint",
+                "streetsidesoftware.code-spell-checker",
+                
+                // API Development
+                "humao.rest-client",
+                "42crunch.vscode-openapi",
+                
+                // Code Quality
+                "editorconfig.editorconfig",
+                "esbenp.prettier-vscode",
+                "aaron-bond.better-comments",
+                "gruntfuggly.todo-tree",
+                
+                // Jupyter
+                "ms-toolsai.jupyter",
+                "ms-toolsai.vscode-jupyter-cell-tags",
+                "ms-toolsai.datawrangler",
+                
+                // Productivity
+                "pkief.material-icon-theme",
+                "christian-kohler.path-intellisense",
+                "formulahendry.auto-rename-tag",
+                "njpwerner.autodocstring"
+            ],
+            "settings": {
+                "python.defaultInterpreterPath": "/usr/local/bin/python",
+                "python.terminal.activateEnvironment": true,
+                "python.analysis.typeCheckingMode": "basic",
+                "python.linting.enabled": true,
+                "python.linting.flake8Enabled": true,
+                "python.linting.mypyEnabled": true,
+                "python.formatting.provider": "black",
+                "editor.formatOnSave": true,
+                "editor.codeActionsOnSave": {
+                    "source.organizeImports": "explicit"
+                },
+                "files.autoSave": "onFocusChange",
+                "files.trimTrailingWhitespace": true,
+                "files.insertFinalNewline": true,
+                "terminal.integrated.shell.linux": "/bin/bash"
+            }
+        }
+    },
+    
+    // Container user
+    "remoteUser": "vscode",
+    
+    // Container environment variables
+    "containerEnv": {
+        "PYTHONPATH": "/workspace",
+        "ENVIRONMENT": "development",
+        "LOG_LEVEL": "DEBUG",
+        "USE_MOCK_HARDWARE": "true"
+    },
+    
+    // Port forwarding
+    "forwardPorts": [
+        8888,   // API Server
+        8889,   // WebSocket
+        5432,   // PostgreSQL
+        6379,   // Redis
+        3000,   // Grafana
+        9090,   // Prometheus
+        9000,   // MinIO API
+        9001,   // MinIO Console
+        5050,   // pgAdmin
+        8081,   // Redis Commander
+        5678    // Debugger
+    ],
+    
+    // Port attributes
+    "portsAttributes": {
+        "8888": {
+            "label": "Drone Detector API",
+            "onAutoForward": "notify"
+        },
+        "8889": {
+            "label": "WebSocket Server",
+            "onAutoForward": "silent"
+        },
+        "5432": {
+            "label": "PostgreSQL",
+            "onAutoForward": "silent"
+        },
+        "6379": {
+            "label": "Redis",
+            "onAutoForward": "silent"
+        },
+        "3000": {
+            "label": "Grafana",
+            "onAutoForward": "silent"
+        },
+        "9090": {
+            "label": "Prometheus",
+            "onAutoForward": "silent"
+        },
+        "5678": {
+            "label": "Debugger",
+            "onAutoForward": "notify"
+        }
+    },
+    
+    // Mount points
+    "mounts": [
+        "source=${localWorkspaceFolder}/data,target=/workspace/data,type=bind",
+        "source=${localWorkspaceFolder}/logs,target=/workspace/logs,type=bind",
+        "source=${localWorkspaceFolder}/models,target=/workspace/models,type=bind"
+    ],
+    
+    // Run arguments
+    "runArgs": [
+        "--cap-add=SYS_PTRACE",
+        "--security-opt",
+        "seccomp=unconfined",
+        "--privileged"
+    ],
+    
+    // Features to install
+    "features": {
+        "ghcr.io/devcontainers/features/python:1": {
+            "version": "3.11",
+            "optimize": true
+        },
+        "ghcr.io/devcontainers/features/docker-in-docker:2": {
+            "version": "latest",
+            "enableNonRootDocker": "true"
+        },
+        "ghcr.io/devcontainers/features/git:1": {
+            "version": "latest",
+            "ppa": true
+        },
+        "ghcr.io/devcontainers/features/sshd:1": {
+            "version": "latest"
+        },
+        "ghcr.io/devcontainers/features/node:1": {
+            "version": "lts"
+        },
+        "ghcr.io/michalszulc/features/sdr:1": {
+            "install_hackrf": true,
+            "install_rtlsdr": true,
+            "install_soapysdr": true
+        },
+        "ghcr.io/devcontainers/features/rust:1": {},
+        "ghcr.io/devcontainers/features/terraform:1": {},
+        "ghcr.io/devcontainers/features/kubectl:1": {},
+        "ghcr.io/devcontainers/features/helm:1": {}
+    },
+    
+    // Post-create command
+    "postCreateCommand": "bash .devcontainer/post-create.sh",
+    
+    // Post-start command
+    "postStartCommand": "bash .devcontainer/post-start.sh",
+    
+    // Post-attach command
+    "postAttachCommand": "bash .devcontainer/post-attach.sh",
+    
+    // Initialize command
+    "initializeCommand": "echo 'Initializing Drone Detector development container...'",
+    
+    // Update remote user UID/GID to match local user
+    "updateRemoteUserUID": true,
+    
+    // Shutdown action
+    "shutdownAction": "stopContainer",
+    
+    // Workspace folder
+    "workspaceFolder": "/workspace",
+    
+    // Workspace mount
+    "workspaceMount": "type=bind,source=${localWorkspaceFolder},target=/workspace",
+    
+    // Override command
+    // "overrideCommand": false,
+    
+    // Use host network (optional - for SDR hardware access)
+    // "runArgs": ["--network=host"],
+    
+    // For USB device access (SDR hardware)
+    "mounts": [
+        "type=bind,source=/dev/bus/usb,target=/dev/bus/usb"
+    ],
+    
+    // Device access for SDR
+    "runArgs": [
+        "--device=/dev/bus/usb",
+        "--privileged"
+    ]
+}

@@ -1,0 +1,549 @@
+# Docker Compose configuration for Drone Detector Development Environment
+# Optimized for local development with hot-reload and debugging
+
+version: '3.8'
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  drone-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  postgres_data_dev:
+    driver: local
+  redis_data_dev:
+    driver: local
+  minio_data_dev:
+    driver: local
+  drone_data_dev:
+    driver: local
+  drone_logs_dev:
+    driver: local
+  drone_models_dev:
+    driver: local
+  python_cache:
+    driver: local
+
+# ============================================================================
+# Services
+# ============================================================================
+services:
+  # --------------------------------------------------------------------------
+  # PostgreSQL Database (Development)
+  # --------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: drone-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-drone_detector_dev}
+      POSTGRES_USER: ${POSTGRES_USER:-dev_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_password}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=C"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+      - ./docker/postgres/init-dev.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./docker/postgres/dev-data.sql:/docker-entrypoint-initdb.d/dev-data.sql:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - drone-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dev_user} -d ${POSTGRES_DB:-drone_detector_dev}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # --------------------------------------------------------------------------
+  # PostgreSQL Admin (pgAdmin)
+  # --------------------------------------------------------------------------
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: drone-pgadmin-dev
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-dev@drone-detector.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-dev_password}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    volumes:
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    networks:
+      - drone-network
+    depends_on:
+      - postgres
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # --------------------------------------------------------------------------
+  # Redis Cache (Development)
+  # --------------------------------------------------------------------------
+  redis:
+    image: redis:7.2-alpine
+    container_name: drone-redis-dev
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --loglevel debug
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-dev_redis_password}
+    volumes:
+      - redis_data_dev:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    networks:
+      - drone-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # --------------------------------------------------------------------------
+  # Redis Commander (Redis GUI)
+  # --------------------------------------------------------------------------
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: drone-redis-commander-dev
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: local:redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-dev_redis_password}
+      HTTP_USER: ${REDIS_COMMANDER_USER:-admin}
+      HTTP_PASSWORD: ${REDIS_COMMANDER_PASSWORD:-admin123}
+    ports:
+      - "${REDIS_COMMANDER_PORT:-8081}:8081"
+    networks:
+      - drone-network
+    depends_on:
+      - redis
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # --------------------------------------------------------------------------
+  # MinIO Object Storage (Development)
+  # --------------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: drone-minio-dev
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      MINIO_BROWSER: "on"
+    volumes:
+      - minio_data_dev:/data
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    networks:
+      - drone-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # --------------------------------------------------------------------------
+  # MinIO Client (Initialize Buckets)
+  # --------------------------------------------------------------------------
+  minio-init:
+    image: minio/mc:latest
+    container_name: drone-minio-init-dev
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5;
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin123};
+      mc mb local/iq-recordings || true;
+      mc mb local/spectrum-data || true;
+      mc mb local/ml-models || true;
+      mc mb local/exports || true;
+      mc mb local/test-data || true;
+      mc policy set download local/iq-recordings;
+      mc policy set download local/exports;
+      mc policy set public local/test-data;
+      exit 0;
+      "
+    networks:
+      - drone-network
+
+  # --------------------------------------------------------------------------
+  # TimescaleDB (Time-series for development)
+  # --------------------------------------------------------------------------
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: drone-timescaledb-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${TIMESCALE_DB:-drone_analytics_dev}
+      POSTGRES_USER: ${TIMESCALE_USER:-analytics_dev_user}
+      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD:-analytics_dev_password}
+      TIMESCALEDB_TELEMETRY: "off"
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    ports:
+      - "${TIMESCALE_PORT:-5433}:5432"
+    networks:
+      - drone-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TIMESCALE_USER:-analytics_dev_user} -d ${TIMESCALE_DB:-drone_analytics_dev}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # --------------------------------------------------------------------------
+  # Grafana (Development Metrics)
+  # --------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: drone-grafana-dev
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin123}
+      GF_INSTALL_PLUGINS: grafana-piechart-panel,grafana-worldmap-panel,grafana-clock-panel
+      GF_SERVER_ROOT_URL: ${GRAFANA_URL:-http://localhost:3000}
+      GF_LOG_LEVEL: debug
+    volumes:
+      - ./docker/grafana/dashboards-dev:/etc/grafana/provisioning/dashboards:ro
+      - ./docker/grafana/datasources-dev:/etc/grafana/provisioning/datasources:ro
+      - drone_logs_dev:/var/log/grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    networks:
+      - drone-network
+    depends_on:
+      - prometheus
+      - loki
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # --------------------------------------------------------------------------
+  # Prometheus (Development Metrics Collection)
+  # --------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: drone-prometheus-dev
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+      - '--log.level=debug'
+    volumes:
+      - ./docker/prometheus/prometheus-dev.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/prometheus/alerts-dev.yml:/etc/prometheus/alerts.yml:ro
+      - drone_data_dev:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    networks:
+      - drone-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # --------------------------------------------------------------------------
+  # Loki (Development Log Aggregation)
+  # --------------------------------------------------------------------------
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: drone-loki-dev
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yaml -log.level=debug
+    volumes:
+      - ./docker/loki/loki-config-dev.yaml:/etc/loki/loki-config.yaml:ro
+      - drone_logs_dev:/loki
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    networks:
+      - drone-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # --------------------------------------------------------------------------
+  # Vector (Log Shipping Development)
+  # --------------------------------------------------------------------------
+  vector:
+    image: timberio/vector:0.33.0-alpine
+    container_name: drone-vector-dev
+    restart: unless-stopped
+    volumes:
+      - ./docker/vector/vector-dev.toml:/etc/vector/vector.toml:ro
+      - ./logs:/var/log/drone-detector:ro
+      - ./data/logs:/var/log/drone-detector/data:ro
+    networks:
+      - drone-network
+    depends_on:
+      - loki
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # --------------------------------------------------------------------------
+  # Main Application (Development with Hot Reload)
+  # --------------------------------------------------------------------------
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+      target: development
+    image: drone-detector:dev
+    container_name: drone-app-dev
+    restart: unless-stopped
+    # For USB SDR hardware (optional, comment out if not needed)
+    # privileged: true
+    # devices:
+    #   - "/dev/bus/usb:/dev/bus/usb"
+    environment:
+      ENVIRONMENT: development
+      DEBUG: "true"
+      LOG_LEVEL: DEBUG
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dev_user}:${POSTGRES_PASSWORD:-dev_password}@postgres:5432/${POSTGRES_DB:-drone_detector_dev}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-dev_redis_password}@redis:6379
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      TIMESCALE_URL: postgresql://${TIMESCALE_USER:-analytics_dev_user}:${TIMESCALE_PASSWORD:-analytics_dev_password}@timescaledb:5432/${TIMESCALE_DB:-drone_analytics_dev}
+      HARDWARE_TYPE: ${HARDWARE_TYPE:-mock}
+      USE_MOCK_HARDWARE: ${USE_MOCK_HARDWARE:-true}
+      PYTHONBREAKPOINT: ipdb.set_trace
+      PYTHONMALLOC: debug
+    volumes:
+      # Mount source code for hot reload
+      - ..:/app
+      # Keep Python packages separate
+      - python_cache:/app/.venv
+      # Data volumes
+      - drone_data_dev:/app/data
+      - drone_logs_dev:/app/logs
+      - drone_models_dev:/app/models
+      # Exclude development artifacts
+      - /app/.git
+      - /app/.pytest_cache
+      - /app/.mypy_cache
+      - /app/htmlcov
+      - /app/.coverage
+    ports:
+      - "${API_PORT:-8888}:8888"      # FastAPI
+      - "${WEBSOCKET_PORT:-8889}:8889" # WebSocket
+      - "${DEBUGGER_PORT:-5678}:5678"  # Debugger
+      - "${METRICS_PORT:-9090}:9090"   # Metrics
+      - "${JUPYTER_PORT:-8889}:8889"   # Jupyter (if using)
+    networks:
+      - drone-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    # Override command for development with hot reload
+    command: >
+      sh -c "
+        pip install -e . &&
+        uvicorn api.main:app --host 0.0.0.0 --port 8888 --reload --reload-dir /app --log-level debug
+      "
+    stdin_open: true
+    tty: true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # --------------------------------------------------------------------------
+  # Worker Service (Development)
+  # --------------------------------------------------------------------------
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+      target: development
+    image: drone-detector:dev
+    container_name: drone-worker-dev
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: development
+      DEBUG: "true"
+      LOG_LEVEL: DEBUG
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dev_user}:${POSTGRES_PASSWORD:-dev_password}@postgres:5432/${POSTGRES_DB:-drone_detector_dev}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-dev_redis_password}@redis:6379
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      USE_MOCK_HARDWARE: "true"
+    volumes:
+      - ..:/app
+      - python_cache:/app/.venv
+      - drone_data_dev:/app/data
+      - drone_logs_dev:/app/logs
+      - drone_models_dev:/app/models
+    networks:
+      - drone-network
+    depends_on:
+      - postgres
+      - redis
+      - minio
+    command: >
+      sh -c "
+        pip install -e . &&
+        python app/workers/worker.py
+      "
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # --------------------------------------------------------------------------
+  # Jupyter Lab (Data Science & Analysis)
+  # --------------------------------------------------------------------------
+  jupyter:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+      target: development
+    image: drone-detector:dev
+    container_name: drone-jupyter-dev
+    restart: unless-stopped
+    environment:
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-dev_token}
+      JUPYTER_PASSWORD: ${JUPYTER_PASSWORD:-dev_password}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dev_user}:${POSTGRES_PASSWORD:-dev_password}@postgres:5432/${POSTGRES_DB:-drone_detector_dev}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-dev_redis_password}@redis:6379
+    volumes:
+      - ..:/app
+      - ./notebooks:/app/notebooks
+      - drone_data_dev:/app/data
+      - drone_models_dev:/app/models
+    ports:
+      - "${JUPYTER_PORT:-8888}:8888"
+    networks:
+      - drone-network
+    depends_on:
+      - postgres
+      - redis
+    command: >
+      sh -c "
+        pip install -e . &&
+        jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='${JUPYTER_TOKEN:-dev_token}'
+      "
+    profiles:
+      - data-science
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # --------------------------------------------------------------------------
+  # Mailhog (Email Testing)
+  # --------------------------------------------------------------------------
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: drone-mailhog-dev
+    restart: unless-stopped
+    ports:
+      - "${MAILHOG_SMTP_PORT:-1025}:1025"
+      - "${MAILHOG_UI_PORT:-8025}:8025"
+    networks:
+      - drone-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # --------------------------------------------------------------------------
+  # SDR Hardware Simulator (Optional - for testing without real hardware)
+  # --------------------------------------------------------------------------
+  sdr-simulator:
+    image: python:3.11-slim
+    container_name: drone-sdr-simulator-dev
+    restart: unless-stopped
+    volumes:
+      - ./docker/sdr-simulator:/app
+      - drone_data_dev:/data
+    command: python /app/simulator.py
+    networks:
+      - drone-network
+    profiles:
+      - sdr-sim
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ============================================================================
+# Development Helper Commands
+# ============================================================================
+# Start all services: docker-compose -f docker-compose.dev.yml up -d
+# Start with data science: docker-compose -f docker-compose.dev.yml --profile data-science up -d
+# View logs: docker-compose -f docker-compose.dev.yml logs -f app
+# Rebuild: docker-compose -f docker-compose.dev.yml up -d --build
+# Stop all: docker-compose -f docker-compose.dev.yml down
+# Reset everything: docker-compose -f docker-compose.dev.yml down -v

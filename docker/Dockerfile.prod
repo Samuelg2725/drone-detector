@@ -1,0 +1,352 @@
+# Production Dockerfile for Drone Detector System
+# Optimized for security, size, and performance in production
+
+# ============================================================================
+# Stage 1: Builder - Compile and prepare production artifacts
+# ============================================================================
+FROM python:3.11-slim-bookworm AS builder
+
+# Set build environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    make \
+    cmake \
+    pkg-config \
+    python3-dev \
+    libfftw3-dev \
+    libhackrf-dev \
+    librtlsdr-dev \
+    libpq-dev \
+    libssl-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy dependency files
+COPY requirements.txt pyproject.toml setup.py ./
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip wheel && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir gunicorn uvicorn[standard] hiredis
+
+# Copy application code
+COPY . .
+
+# Build extensions
+RUN python setup.py build_ext --inplace 2>/dev/null || true
+
+# Run tests (optional - uncomment for CI)
+# RUN pip install pytest && pytest tests/unit/ -v
+
+# ============================================================================
+# Stage 2: Production - Minimal runtime image
+# ============================================================================
+FROM python:3.11-slim-bookworm AS production
+
+# Set production environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONHASHSEED=random \
+    ENVIRONMENT=production \
+    LOG_LEVEL=INFO \
+    DEBUG=False \
+    SECRET_KEY_REQUIRED=true \
+    PATH="/opt/venv/bin:$PATH"
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Runtime libraries
+    libfftw3-dev \
+    libhackrf0 \
+    librtlsdr0 \
+    libpq5 \
+    libusb-1.0-0 \
+    ca-certificates \
+    curl \
+    # Health check and monitoring
+    procps \
+    # Clean up
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/locale/*
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+
+# Create non-root user
+RUN groupadd -r drone -g 1000 && \
+    useradd -r -g drone -u 1000 -m -s /bin/bash -d /app drone && \
+    mkdir -p /app /var/log/drone-detector /var/lib/drone-detector /var/run/drone-detector && \
+    chown -R drone:drone /app /var/log/drone-detector /var/lib/drone-detector /var/run/drone-detector
+
+WORKDIR /app
+
+# Copy application code with proper ownership
+COPY --chown=drone:drone . .
+
+# Copy configuration files
+COPY --chown=drone:drone config/*.yaml config/*.json /app/config/ 2>/dev/null || true
+
+# Create necessary directories with proper permissions
+RUN mkdir -p /app/data /app/logs /app/models /app/signatures && \
+    chown -R drone:drone /app/data /app/logs /app/models /app/signatures
+
+# Remove development files to reduce image size
+RUN find /app -name "*.pyc" -delete && \
+    find /app -name "__pycache__" -type d -delete && \
+    find /app -name "*.md" -type f -delete && \
+    find /app -name "test_*.py" -type f -delete && \
+    rm -rf /app/tests /app/docs /app/.github /app/.vscode /app/.devcontainer /app/notebooks || true
+
+# Create entrypoint script
+RUN echo '#!/bin/bash\n\
+set -e\n\
+\n\
+# Check for required environment variables\n\
+if [ -n "$SECRET_KEY_REQUIRED" ] && [ -z "$SECRET_KEY" ]; then\n\
+    echo "ERROR: SECRET_KEY environment variable is required in production"\n\
+    exit 1\n\
+fi\n\
+\n\
+# Wait for database if needed\n\
+if [ -n "$DATABASE_HOST" ] && [ -n "$DATABASE_PORT" ]; then\n\
+    echo "Waiting for database at $DATABASE_HOST:$DATABASE_PORT..."\n\
+    while ! nc -z "$DATABASE_HOST" "$DATABASE_PORT"; do\n\
+        sleep 1\n\
+    done\n\
+    echo "Database is ready"\n\
+fi\n\
+\n\
+# Run database migrations\n\
+if [ -f "/app/scripts/migrate.py" ]; then\n\
+    echo "Running database migrations..."\n\
+    python /app/scripts/migrate.py --upgrade head\n\
+fi\n\
+\n\
+# Create default admin user if configured\n\
+if [ -n "$CREATE_ADMIN_USER" ] && [ "$CREATE_ADMIN_USER" = "true" ]; then\n\
+    echo "Creating admin user..."\n\
+    python /app/scripts/create_admin.py || true\n\
+fi\n\
+\n\
+# Start the application based on the command\n\
+case "$1" in\n\
+    api)\n\
+        echo "Starting API server..."\n\
+        exec gunicorn api.main:app \\\n\
+            --worker-class uvicorn.workers.UvicornWorker \\\n\
+            --workers ${GUNICORN_WORKERS:-4} \\\n\
+            --threads ${GUNICORN_THREADS:-2} \\\n\
+            --bind 0.0.0.0:${PORT:-8888} \\\n\
+            --timeout ${GUNICORN_TIMEOUT:-120} \\\n\
+            --keep-alive ${GUNICORN_KEEP_ALIVE:-5} \\\n\
+            --max-requests ${GUNICORN_MAX_REQUESTS:-1000} \\\n\
+            --max-requests-jitter ${GUNICORN_MAX_REQUESTS_JITTER:-50} \\\n\
+            --access-logfile - \\\n\
+            --error-logfile - \\\n\
+            --log-level ${LOG_LEVEL:-INFO}\n\
+        ;;\n\
+    worker)\n\
+        echo "Starting background worker..."\n\
+        exec python /app/workers/worker.py\n\
+        ;;\n\
+    beat)\n\
+        echo "Starting scheduler..."\n\
+        exec python /app/workers/beat.py\n\
+        ;;\n\
+    all)\n\
+        echo "Starting all services..."\n\
+        # Start API, worker, and beat\n\
+        gunicorn api.main:app \\\n\
+            --worker-class uvicorn.workers.UvicornWorker \\\n\
+            --workers ${GUNICORN_WORKERS:-2} \\\n\
+            --bind 0.0.0.0:${PORT:-8888} \\\n\
+            --daemon \\\n\
+            --access-logfile /var/log/drone-detector/access.log \\\n\
+            --error-logfile /var/log/drone-detector/error.log\n\
+        python /app/workers/worker.py &\n\
+        python /app/workers/beat.py\n\
+        ;;\n\
+    migrate)\n\
+        echo "Running migrations..."\n\
+        exec python /app/scripts/migrate.py "$@"\n\
+        ;;\n\
+    shell)\n\
+        echo "Starting Python shell..."\n\
+        exec python\n\
+        ;;\n\
+    health)\n\
+        # Health check endpoint using curl\n\
+        curl -f http://localhost:${PORT:-8888}/health || exit 1\n\
+        ;;\n\
+    *)\n\
+        exec "$@"\n\
+        ;;\n\
+esac' > /usr/local/bin/prod-entrypoint.sh && \
+    chmod +x /usr/local/bin/prod-entrypoint.sh && \
+    chown drone:drone /usr/local/bin/prod-entrypoint.sh
+
+# Install netcat for database waiting (removed after use in multi-stage? kept for simplicity)
+RUN apt-get update && apt-get install -y --no-install-recommends netcat-openbsd && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Switch to non-root user
+USER drone
+
+# Expose ports
+EXPOSE 8888 8889 9090
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8888/health || exit 1
+
+# Set entrypoint
+ENTRYPOINT ["/usr/local/bin/prod-entrypoint.sh"]
+
+# Default command
+CMD ["api"]
+
+# ============================================================================
+# Stage 3: Production with GPU (for ML inference)
+# ============================================================================
+FROM nvidia/cuda:12.1-runtime-ubuntu22.04 AS production-gpu
+
+# Copy from production stage
+COPY --from=production / /
+
+# Install GPU-specific dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcudnn9-cuda-12 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install PyTorch with CUDA
+RUN /opt/venv/bin/pip install --no-cache-dir \
+    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# Set GPU environment
+ENV CUDA_VISIBLE_DEVICES=0 \
+    TF_CPP_MIN_LOG_LEVEL=2 \
+    USE_GPU=true
+
+USER drone
+EXPOSE 8888 8889 9090
+ENTRYPOINT ["/usr/local/bin/prod-entrypoint.sh"]
+CMD ["api"]
+
+# ============================================================================
+# Stage 4: Production - Minimal (Alpine-based for extremely small size)
+# ============================================================================
+FROM python:3.11-alpine AS production-alpine
+
+# Install runtime dependencies (Alpine packages)
+RUN apk add --no-cache \
+    libfftw3 \
+    libhackrf \
+    librtlsdr \
+    libpq \
+    libusb \
+    curl \
+    ca-certificates \
+    netcat-openbsd
+
+# Copy virtual environment from builder (need builder with Alpine)
+# For Alpine compatibility, use a separate builder or skip this stage
+# This stage is provided as a template for minimal deployments
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    ENVIRONMENT=production \
+    PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /app
+
+# Note: You would need to build with an Alpine-based builder for this to work
+# COPY --from=builder-alpine /opt/venv /opt/venv
+# COPY --chown=drone:drone . .
+
+USER drone
+EXPOSE 8888
+CMD ["gunicorn", "api.main:app", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8888"]
+
+# ============================================================================
+# Stage 5: Production - ARM64 (Raspberry Pi, AWS Graviton)
+# ============================================================================
+FROM arm64v8/python:3.11-slim-bookworm AS production-arm64
+
+# ARM64-optimized build
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    ENVIRONMENT=production \
+    LOG_LEVEL=INFO \
+    PATH="/opt/venv/bin:$PATH"
+
+# Install ARM64 runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libfftw3-dev \
+    libhackrf0 \
+    librtlsdr0 \
+    libpq5 \
+    libusb-1.0-0 \
+    ca-certificates \
+    curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy virtual environment (build on ARM64 platform)
+COPY --from=builder /opt/venv /opt/venv
+
+# Create non-root user
+RUN groupadd -r drone -g 1000 && \
+    useradd -r -g drone -u 1000 -m -s /bin/bash -d /app drone && \
+    mkdir -p /app /var/log/drone-detector && \
+    chown -R drone:drone /app /var/log/drone-detector
+
+WORKDIR /app
+COPY --chown=drone:drone . .
+
+# ARM64 optimizations
+ENV OPENBLAS_CORETYPE=ARMV8 \
+    OMP_NUM_THREADS=2
+
+USER drone
+EXPOSE 8888 8889
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8888/health || exit 1
+ENTRYPOINT ["/usr/local/bin/prod-entrypoint.sh"]
+CMD ["api"]
+
+# ============================================================================
+# Stage 6: Production - Distroless (Google Distroless for maximum security)
+# ============================================================================
+FROM gcr.io/distroless/python3 AS production-distroless
+
+# Copy from builder
+COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /app /app
+
+# Set environment
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    ENVIRONMENT=production
+
+WORKDIR /app
+
+# Note: Distroless has no shell, so no entrypoint script
+# Direct command execution only
+EXPOSE 8888
+CMD ["api/main.py"]

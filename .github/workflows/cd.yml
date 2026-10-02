@@ -1,0 +1,533 @@
+name: Continuous Deployment
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      version:
+        description: 'Version to deploy (leave empty for latest)'
+        required: false
+        type: string
+
+# Environment variables
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+
+jobs:
+  # ============================================================================
+  # Build and Publish Docker Image
+  # ============================================================================
+  build-and-publish:
+    name: Build & Publish Docker Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_digest: ${{ steps.docker-build.outputs.digest }}
+      version: ${{ steps.version.outputs.version }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+          
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+          driver-opts: |
+            image=moby/buildkit:master
+            network=host
+          
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+        if: secrets.DOCKER_USERNAME != ''
+        
+      - name: Extract version
+        id: version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+          else
+            VERSION=$(git describe --tags --abbrev=0)-$(git rev-parse --short HEAD)
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+            ${{ secrets.DOCKER_USERNAME }}/drone-detector
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+          labels: |
+            org.opencontainers.image.title=Drone Detector
+            org.opencontainers.image.description=Advanced Drone Detection System
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            
+      - name: Build and push Docker image
+        id: docker-build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.prod
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_VERSION=${{ steps.version.outputs.version }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+            VCS_REF=${{ github.sha }}
+            
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.meta.outputs.tags }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+          
+      - name: Sign Docker image
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.2.0'
+          
+      - name: Sign the images
+        run: |
+          cosign sign --yes ${{ steps.meta.outputs.tags }}
+        env:
+          COSIGN_EXPERIMENTAL: true
+
+  # ============================================================================
+  # Deploy to Staging
+  # ============================================================================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-and-publish
+    if: github.ref == 'refs/heads/main' || github.event.inputs.environment == 'staging'
+    environment:
+      name: staging
+      url: https://staging.drone-detector.com
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure kubectl
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 --decode > $HOME/.kube/config
+          
+      - name: Deploy to Kubernetes
+        run: |
+          # Update image tag
+          kubectl set image deployment/drone-detector-api \
+            api=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-publish.outputs.version }} \
+            -n staging
+            
+          # Wait for rollout
+          kubectl rollout status deployment/drone-detector-api -n staging --timeout=5m
+          
+      - name: Verify deployment
+        run: |
+          # Health check
+          kubectl exec -n staging deployment/drone-detector-api -- \
+            curl -f http://localhost:8888/health
+          
+          # Run smoke tests
+          kubectl exec -n staging deployment/drone-detector-api -- \
+            python scripts/smoke_test.py
+            
+      - name: Notify deployment
+        run: |
+          curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "text": "🚀 Staging deployment completed!\nVersion: ${{ needs.build-and-publish.outputs.version }}\nImage: ${{ needs.build-and-publish.outputs.image_tag }}\nEnvironment: Staging"
+            }'
+
+  # ============================================================================
+  # Deploy to Production
+  # ============================================================================
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-and-publish, deploy-staging]
+    if: github.ref == 'refs/heads/main' && github.event.inputs.environment != 'staging'
+    environment:
+      name: production
+      url: https://drone-detector.com
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure kubectl
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBE_CONFIG_PRODUCTION }}" | base64 --decode > $HOME/.kube/config
+          
+      - name: Create deployment backup
+        run: |
+          kubectl get all -n production -o yaml > deployment-backup.yaml
+          
+      - name: Apply database migrations
+        run: |
+          kubectl exec -n production deployment/drone-detector-api -- \
+            python scripts/migrate.py upgrade head --precheck
+          
+      - name: Deploy with rolling update
+        run: |
+          # Update image with rolling update strategy
+          kubectl set image deployment/drone-detector-api \
+            api=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-publish.outputs.version }} \
+            -n production
+            
+          # Monitor rollout
+          kubectl rollout status deployment/drone-detector-api -n production --timeout=10m
+          
+      - name: Canary verification
+        run: |
+          # Get pod names
+          NEW_POD=$(kubectl get pods -n production -l app=drone-detector-api --sort-by=.metadata.creationTimestamp | tail -1 | awk '{print $1}')
+          
+          # Run canary tests
+          kubectl exec -n production $NEW_POD -- python scripts/canary_test.py
+          
+          # Check metrics
+          kubectl exec -n production $NEW_POD -- curl -s http://localhost:8888/metrics | grep -E "detection_rate|error_rate"
+          
+      - name: Blue/Green switch (if using load balancer)
+        if: false  # Enable if using blue-green deployment
+        run: |
+          kubectl patch service drone-detector-api -n production -p '{"spec":{"selector":{"version":"blue"}}}'
+          
+      - name: Performance baseline comparison
+        run: |
+          kubectl exec -n production deployment/drone-detector-api -- \
+            python scripts/performance_baseline.py \
+            --threshold 5 \
+            --output baseline-report.json
+            
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          kubectl rollout undo deployment/drone-detector-api -n production
+          kubectl rollout status deployment/drone-detector-api -n production
+          
+      - name: Notify deployment
+        run: |
+          curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "text": "✅ Production deployment completed!\nVersion: ${{ needs.build-and-publish.outputs.version }}\nImage: ${{ needs.build-and-publish.outputs.image_tag }}\nEnvironment: Production"
+            }'
+
+  # ============================================================================
+  # Database Migrations (Scheduled)
+  # ============================================================================
+  database-migrations:
+    name: Database Migrations
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure kubectl
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBE_CONFIG_PRODUCTION }}" | base64 --decode > $HOME/.kube/config
+          
+      - name: Run migrations with backup
+        run: |
+          # Create database backup
+          kubectl exec -n production deployment/drone-detector-api -- \
+            pg_dump -U drone_user -d drone_detector > backup-$(date +%Y%m%d).sql
+            
+          # Run migrations
+          kubectl exec -n production deployment/drone-detector-api -- \
+            python scripts/migrate.py upgrade head
+          
+      - name: Verify migrations
+        run: |
+          kubectl exec -n production deployment/drone-detector-api -- \
+            python scripts/verify_migrations.py
+
+  # ============================================================================
+  # Release Management
+  # ============================================================================
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-and-publish, deploy-production]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          # Generate changelog
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^)
+          CHANGELOG=$(git log $PREV_TAG..HEAD --pretty=format:"- %s" --no-merges)
+          
+          # Write to file
+          cat > release_notes.md << EOF
+          ## What's Changed
+          
+          $CHANGELOG
+          
+          ## Installation
+          
+          \`\`\`bash
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-publish.outputs.version }}
+          docker run -d -p 8888:8888 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-publish.outputs.version }}
+          \`\`\`
+          
+          ## Upgrade Notes
+          
+          See [UPGRADING.md](https://github.com/${{ github.repository }}/blob/main/UPGRADING.md) for upgrade instructions.
+          
+          ## Docker Images
+          
+          - \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-publish.outputs.version }}\`
+          - \`${{ secrets.DOCKER_USERNAME }}/drone-detector:${{ needs.build-and-publish.outputs.version }}\`
+          
+          ## Full Changelog
+          
+          https://github.com/${{ github.repository }}/compare/$PREV_TAG...${{ github.ref_name }}
+          EOF
+          
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+          files: |
+            dist/*
+            drone-detector-test.tar.gz
+
+  # ============================================================================
+  # Publish to PyPI
+  # ============================================================================
+  publish-pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: [build-and-publish, deploy-production]
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment:
+      name: pypi
+      url: https://pypi.org/project/drone-detector
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+          
+      - name: Build package
+        run: |
+          python -m build
+          twine check dist/*
+          
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          skip_existing: true
+          
+  # ============================================================================
+  # Update Documentation
+  # ============================================================================
+  update-docs:
+    name: Update Documentation
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          pip install mkdocs mkdocs-material pymdown-extensions mike
+          
+      - name: Deploy documentation
+        run: |
+          # Get version
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+            mike deploy $VERSION latest --update-aliases
+          else
+            mike deploy dev --update-aliases
+          fi
+          
+      - name: Sync to S3
+        run: |
+          aws s3 sync site/ s3://docs.drone-detector.com/ --delete
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: us-east-1
+
+  # ============================================================================
+  # Health Monitoring After Deployment
+  # ============================================================================
+  health-monitoring:
+    name: Health Monitoring
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: always()
+    
+    steps:
+      - name: Wait for deployment
+        run: sleep 30
+        
+      - name: Check API health
+        run: |
+          for i in {1..12}; do
+            if curl -f https://drone-detector.com/health; then
+              echo "✅ API is healthy"
+              exit 0
+            fi
+            echo "Waiting for API to be ready... ($i/12)"
+            sleep 5
+          done
+          echo "❌ API health check failed"
+          exit 1
+          
+      - name: Check WebSocket
+        run: |
+          timeout 10 wscat -c wss://drone-detector.com/ws --execute "ping" || true
+          
+      - name: Run full system validation
+        run: |
+          python scripts/validate_deployment.py \
+            --endpoint https://drone-detector.com \
+            --api-key ${{ secrets.API_KEY }}
+            
+      - name: Check error rates
+        run: |
+          ERROR_RATE=$(curl -s https://drone-detector.com/metrics | grep error_rate | awk '{print $2}')
+          if (( $(echo "$ERROR_RATE > 0.01" | bc -l) )); then
+            echo "⚠️ Error rate too high: $ERROR_RATE"
+            exit 1
+          fi
+
+  # ============================================================================
+  # Rollback on Critical Issues
+  # ============================================================================
+  rollback:
+    name: Automated Rollback
+    runs-on: ubuntu-latest
+    needs: [health-monitoring]
+    if: failure() && github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      
+    steps:
+      - name: Configure kubectl
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBE_CONFIG_PRODUCTION }}" | base64 --decode > $HOME/.kube/config
+          
+      - name: Rollback to previous version
+        run: |
+          # Get previous revision
+          PREV_REVISION=$(kubectl rollout history deployment/drone-detector-api -n production | tail -2 | head -1 | awk '{print $1}')
+          
+          # Rollback
+          kubectl rollout undo deployment/drone-detector-api -n production --to-revision=$PREV_REVISION
+          
+          # Wait for rollback
+          kubectl rollout status deployment/drone-detector-api -n production --timeout=5m
+          
+      - name: Notify rollback
+        run: |
+          curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "text": "⚠️ Automated rollback triggered!\nHealth checks failed. Previous version restored.\nAction required: Investigate deployment issues."
+            }'

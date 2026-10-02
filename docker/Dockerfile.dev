@@ -1,0 +1,370 @@
+# Development Dockerfile for Drone Detector System
+# Optimized for local development with hot-reload and debugging support
+
+# ============================================================================
+# Development Image
+# ============================================================================
+FROM python:3.11-slim-bookworm AS development
+
+# Set environment variables for development
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONHASHSEED=random \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    POETRY_VERSION=1.7.1 \
+    POETRY_HOME="/opt/poetry" \
+    POETRY_VIRTUALENVS_CREATE=false \
+    ENVIRONMENT=development \
+    DEBUG=True \
+    LOG_LEVEL=DEBUG \
+    DEV_MODE=true
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies for development
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Build essentials
+    gcc \
+    g++ \
+    make \
+    cmake \
+    pkg-config \
+    python3-dev \
+    python3-wheel \
+    python3-setuptools \
+    # SDR development libraries
+    libhackrf-dev \
+    librtlsdr-dev \
+    libairspy-dev \
+    libsoapysdr-dev \
+    libbladerf-dev \
+    liblimesuite-dev \
+    # Signal processing libraries
+    libfftw3-dev \
+    libliquid-dev \
+    libvolk2-dev \
+    # Database libraries
+    libpq-dev \
+    libsqlite3-dev \
+    # Development tools
+    vim \
+    nano \
+    htop \
+    tmux \
+    git \
+    curl \
+    wget \
+    ca-certificates \
+    # Debugging tools
+    gdb \
+    strace \
+    valgrind \
+    lsof \
+    net-tools \
+    iputils-ping \
+    dnsutils \
+    # Testing tools
+    chromium \
+    firefox-esr \
+    # Documentation tools
+    pandoc \
+    graphviz \
+    # Clean up
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python development tools
+RUN pip install --no-cache-dir \
+    pipx \
+    poetry \
+    virtualenv \
+    tox \
+    pre-commit \
+    black \
+    isort \
+    flake8 \
+    pylint \
+    mypy \
+    bandit \
+    safety \
+    pydocstyle \
+    pytest \
+    pytest-cov \
+    pytest-xdist \
+    pytest-asyncio \
+    pytest-timeout \
+    pytest-benchmark \
+    pytest-mock \
+    pytest-env \
+    ipython \
+    ipdb \
+    pudb \
+    watchdog \
+    httpie \
+    jupyter \
+    jupyterlab
+
+# Install radar-specific development tools
+RUN pip install --no-cache-dir \
+    scipy \
+    numpy \
+    matplotlib \
+    seaborn \
+    pandas \
+    jupyter \
+    notebook \
+    ipywidgets \
+    voila
+
+# Copy dependency files
+COPY requirements.txt requirements-dev.txt pyproject.toml setup.py ./
+
+# Install Python dependencies with development extras
+RUN pip install --no-cache-dir \
+    -r requirements.txt \
+    -r requirements-dev.txt \
+    -e .
+
+# Create non-root user for development
+RUN useradd --create-home --shell /bin/bash drone \
+    && usermod -aG sudo drone \
+    && echo "drone ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers \
+    && chown -R drone:drone /app
+
+# Copy application code (will be volume mounted in dev)
+COPY --chown=drone:drone . .
+
+# Create necessary directories with proper permissions
+RUN mkdir -p /app/data \
+    /app/data/iq/live \
+    /app/data/iq/replay \
+    /app/data/iq/synthetic \
+    /app/data/iq/mock \
+    /app/data/logs \
+    /app/data/exports \
+    /app/models \
+    /app/models/training/dataset/raw \
+    /app/models/training/dataset/processed \
+    /app/.vscode \
+    /app/.pytest_cache \
+    /app/htmlcov \
+    /app/.mypy_cache \
+    /app/.coverage \
+    && chown -R drone:drone /app
+
+# Initialize pre-commit hooks
+RUN pre-commit install
+
+# Install VSCode server for remote development (optional)
+RUN curl -fsSL https://code-server.dev/install.sh | sh || true
+
+# Create entrypoint script
+RUN echo '#!/bin/bash\n\
+set -e\n\
+\n\
+# Source bashrc if exists\n\
+if [ -f ~/.bashrc ]; then\n\
+    source ~/.bashrc\n\
+fi\n\
+\n\
+# Ensure we're in the right directory\n\
+cd /app\n\
+\n\
+# Run database migrations if needed\n\
+if [ -f "/app/scripts/migrate.py" ]; then\n\
+    echo "Running database migrations..."\n\
+    python /app/scripts/migrate.py --upgrade head\n\
+fi\n\
+\n\
+# Execute the command passed to the container\n\
+exec "$@"' > /usr/local/bin/dev-entrypoint.sh \
+    && chmod +x /usr/local/bin/dev-entrypoint.sh
+
+# Switch to non-root user
+USER drone
+
+# Configure git for development
+RUN git config --global user.email "dev@drone-detector.local" \
+    && git config --global user.name "Drone Detector Developer"
+
+# Create Python startup script for ipython
+RUN mkdir -p ~/.ipython/profile_default/startup \
+    && echo 'print("🐋 Development Environment Ready!")' > ~/.ipython/profile_default/startup/00-welcome.py \
+    && echo 'import numpy as np' >> ~/.ipython/profile_default/startup/01-imports.py \
+    && echo 'import pandas as pd' >> ~/.ipython/profile_default/startup/01-imports.py \
+    && echo 'import matplotlib.pyplot as plt' >> ~/.ipython/profile_default/startup/01-imports.py
+
+# Create VSCode settings
+RUN mkdir -p /app/.vscode \
+    && echo '{\n\
+    "python.defaultInterpreterPath": "/usr/local/bin/python",\n\
+    "python.analysis.extraPaths": ["/app"],\n\
+    "python.terminal.activateEnvironment": true,\n\
+    "python.linting.enabled": true,\n\
+    "python.linting.flake8Enabled": true,\n\
+    "python.linting.pylintEnabled": true,\n\
+    "python.linting.mypyEnabled": true,\n\
+    "python.formatting.provider": "black",\n\
+    "editor.formatOnSave": true,\n\
+    "editor.codeActionsOnSave": {\n\
+        "source.organizeImports": true\n\
+    },\n\
+    "files.watcherExclude": {\n\
+        "**/.git/objects/**": true,\n\
+        "**/.git/subtree-cache/**": true,\n\
+        "**/node_modules/**": true,\n\
+        "**/data/**": true,\n\
+        "**/__pycache__/**": true,\n\
+        "**/.pytest_cache/**": true\n\
+    },\n\
+    "testing.autoTestDiscoverOnSaveEnabled": true,\n\
+    "python.testing.pytestEnabled": true,\n\
+    "python.testing.unittestEnabled": false,\n\
+    "python.testing.pytestArgs": [\n\
+        "tests",\n\
+        "--no-cov"\n\
+    ]\n\
+}' > /app/.vscode/settings.json
+
+# Create launch.json for debugging
+RUN mkdir -p /app/.vscode \
+    && echo '{\n\
+    "version": "0.2.0",\n\
+    "configurations": [\n\
+        {\n\
+            "name": "Python: FastAPI",\n\
+            "type": "python",\n\
+            "request": "launch",\n\
+            "module": "uvicorn",\n\
+            "args": [\n\
+                "api.main:app",\n\
+                "--reload",\n\
+                "--host", "0.0.0.0",\n\
+                "--port", "8888"\n\
+            ],\n\
+            "jinja": true,\n\
+            "justMyCode": true\n\
+        },\n\
+        {\n\
+            "name": "Python: Current File",\n\
+            "type": "python",\n\
+            "request": "launch",\n\
+            "program": "${file}",\n\
+            "console": "integratedTerminal",\n\
+            "justMyCode": true\n\
+        },\n\
+        {\n\
+            "name": "Python: Pytest",\n\
+            "type": "python",\n\
+            "request": "launch",\n\
+            "module": "pytest",\n\
+            "args": [\n\
+                "${relativeFile}"\n\
+            ],\n\
+            "console": "integratedTerminal",\n\
+            "justMyCode": false\n\
+        }\n\
+    ]\n\
+}' > /app/.vscode/launch.json
+
+# Create pre-commit configuration
+RUN echo 'repos:\n\
+  - repo: https://github.com/pre-commit/pre-commit-hooks\n\
+    rev: v4.5.0\n\
+    hooks:\n\
+      - id: trailing-whitespace\n\
+      - id: end-of-file-fixer\n\
+      - id: check-yaml\n\
+      - id: check-added-large-files\n\
+      - id: check-json\n\
+      - id: check-toml\n\
+      - id: check-merge-conflict\n\
+  - repo: https://github.com/psf/black\n\
+    rev: 23.12.1\n\
+    hooks:\n\
+      - id: black\n\
+        language_version: python3.11\n\
+  - repo: https://github.com/pycqa/isort\n\
+    rev: 5.13.2\n\
+    hooks:\n\
+      - id: isort\n\
+        args: ["--profile", "black"]\n\
+  - repo: https://github.com/pycqa/flake8\n\
+    rev: 7.0.0\n\
+    hooks:\n\
+      - id: flake8\n\
+        args: ["--max-line-length=100"]\n\
+  - repo: https://github.com/pre-commit/mirrors-mypy\n\
+    rev: v1.8.0\n\
+    hooks:\n\
+      - id: mypy\n\
+        additional_dependencies: [types-all]\n\
+  - repo: https://github.com/pycqa/bandit\n\
+    rev: 1.7.6\n\
+    hooks:\n\
+      - id: bandit\n\
+        args: ["-c", "pyproject.toml"]\n' > /app/.pre-commit-config.yaml
+
+# Expose ports
+# API server
+EXPOSE 8888
+# WebSocket server
+EXPOSE 8889
+# Metrics endpoint
+EXPOSE 9090
+# Jupyter notebook
+EXPOSE 8888
+# Debugger port
+EXPOSE 5678
+# VSCode server (if installed)
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8888/health || exit 1
+
+# Set entrypoint
+ENTRYPOINT ["/usr/local/bin/dev-entrypoint.sh"]
+
+# Default command - run development server with hot-reload
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8888", "--reload", "--log-level", "debug"]
+
+# ============================================================================
+# Development with GPU
+# ============================================================================
+FROM nvidia/cuda:12.1-runtime-ubuntu22.04 AS development-gpu
+
+# Copy everything from development stage
+COPY --from=development / /
+
+# Install PyTorch with CUDA support
+RUN pip install --no-cache-dir \
+    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# Set environment for GPU
+ENV CUDA_VISIBLE_DEVICES=0 \
+    TF_CPP_MIN_LOG_LEVEL=2 \
+    USE_GPU=true
+
+WORKDIR /app
+USER drone
+
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8888", "--reload", "--log-level", "debug"]
+
+# ============================================================================
+# Development with Mock Hardware (for testing without SDR)
+# ============================================================================
+FROM development AS development-mock
+
+# Set mock hardware environment
+ENV USE_MOCK_HARDWARE=true \
+    MOCK_DATA_PATH=/app/data/iq/mock
+
+# Copy mock data
+COPY --chown=drone:drone data/iq/mock/*.iq /app/data/iq/mock/ 2>/dev/null || true
+
+USER drone
+
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8888", "--reload", "--log-level", "debug"]

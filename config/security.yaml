@@ -1,0 +1,726 @@
+# ============================================================================
+# Drone Detection System - Security Configuration
+# Version: 2.0.0
+# Description: Comprehensive security settings for authentication, authorization,
+#              encryption, and system protection
+# ============================================================================
+
+# Security Version
+version: "2.0.0"
+
+# General security settings
+general:
+  # Enable/disable security features
+  enabled: true
+  
+  # Security mode: strict, normal, permissive
+  mode: "normal"
+  
+  # Environment: development, staging, production
+  environment: "production"
+  
+  # Security headers
+  headers:
+    enabled: true
+    hsts: true                 # HTTP Strict Transport Security
+    csp: true                  # Content Security Policy
+    x_frame_options: true      # Clickjacking protection
+    x_content_type: true       # MIME type sniffing protection
+    x_xss_protection: true     # XSS protection
+    referrer_policy: true      # Referrer policy
+    permissions_policy: true   # Permissions policy
+
+# Authentication settings
+authentication:
+  # General auth settings
+  enabled: true
+  session_timeout_minutes: 30
+  max_concurrent_sessions: 5
+  
+  # Password policy
+  password_policy:
+    min_length: 8
+    max_length: 128
+    require_uppercase: true
+    require_lowercase: true
+    require_digits: true
+    require_special: true
+    special_chars: "!@#$%^&*()_+-=[]{};':\"\\|,.<>/?"
+    prevent_common_passwords: true
+    prevent_username_in_password: true
+    max_password_age_days: 90
+    password_history_count: 5
+  
+  # Lockout policy
+  lockout:
+    enabled: true
+    max_failed_attempts: 5
+    lockout_duration_minutes: 15
+    reset_after_minutes: 30
+  
+  # Session management
+  session:
+    cookie_name: "drone_session"
+    cookie_secure: true
+    cookie_http_only: true
+    cookie_same_site: "strict"
+    regenerate_id_on_login: true
+    absolute_timeout_minutes: 480
+    idle_timeout_minutes: 30
+  
+  # Multi-factor authentication (MFA)
+  mfa:
+    enabled: true
+    required_for_roles:
+      - admin
+      - operator
+    methods:
+      - totp                    # Time-based One-Time Password
+      - sms                     # SMS verification
+      - email                   # Email verification
+      - backup_codes            # Backup codes
+    
+    totp:
+      issuer: "DroneDetectionSystem"
+      algorithm: "SHA1"
+      digits: 6
+      period_seconds: 30
+      skew: 1
+    
+    backup_codes:
+      count: 8
+      length: 8
+  
+  # OAuth2 / Social login
+  oauth:
+    enabled: false
+    providers:
+      google:
+        client_id: ""
+        client_secret: ""
+        redirect_uri: "/api/auth/oauth/google/callback"
+        scopes: ["email", "profile"]
+      
+      github:
+        client_id: ""
+        client_secret: ""
+        redirect_uri: "/api/auth/oauth/github/callback"
+        scopes: ["user:email"]
+      
+      microsoft:
+        client_id: ""
+        client_secret: ""
+        redirect_uri: "/api/auth/oauth/microsoft/callback"
+        tenant: "common"
+        scopes: ["User.Read"]
+
+# Authorization settings
+authorization:
+  # Role-based access control (RBAC)
+  rbac:
+    enabled: true
+    default_role: "viewer"
+    
+    roles:
+      admin:
+        description: "System administrator"
+        permissions: ["*"]
+        
+      operator:
+        description: "System operator"
+        permissions:
+          - "detections:read"
+          - "detections:write"
+          - "alerts:read"
+          - "alerts:write"
+          - "hardware:control"
+          - "system:monitor"
+          - "reports:generate"
+        
+      analyst:
+        description: "Security analyst"
+        permissions:
+          - "detections:read"
+          - "alerts:read"
+          - "analytics:read"
+          - "reports:generate"
+          - "map:view"
+        
+      viewer:
+        description: "Read-only viewer"
+        permissions:
+          - "detections:read"
+          - "alerts:read"
+          - "dashboard:view"
+          - "map:view"
+        
+      auditor:
+        description: "Audit reviewer"
+        permissions:
+          - "audit:read"
+          - "reports:read"
+      
+      api:
+        description: "API access"
+        permissions:
+          - "api:access"
+          - "detections:read"
+          - "alerts:read"
+  
+  # Permission definitions
+  permissions:
+    # Detection permissions
+    "detections:read": "View detection data"
+    "detections:write": "Create and modify detections"
+    "detections:delete": "Delete detections"
+    "detections:export": "Export detection data"
+    
+    # Alert permissions
+    "alerts:read": "View alerts"
+    "alerts:write": "Acknowledge and resolve alerts"
+    "alerts:delete": "Delete alerts"
+    
+    # Hardware permissions
+    "hardware:control": "Control hardware devices"
+    "hardware:configure": "Configure hardware settings"
+    "hardware:calibrate": "Calibrate hardware"
+    
+    # System permissions
+    "system:monitor": "Monitor system status"
+    "system:configure": "Modify system configuration"
+    "system:upgrade": "Upgrade system"
+    "system:backup": "Backup system data"
+    "system:restore": "Restore system data"
+    
+    # Analytics permissions
+    "analytics:read": "View analytics data"
+    "analytics:export": "Export analytics data"
+    
+    # Report permissions
+    "reports:generate": "Generate reports"
+    "reports:download": "Download reports"
+    
+    # Map permissions
+    "map:view": "View map data"
+    "map:export": "Export map data"
+    
+    # Audit permissions
+    "audit:read": "View audit logs"
+    "audit:export": "Export audit logs"
+    
+    # API permissions
+    "api:access": "Access API endpoints"
+    "api:rate_limit_exempt": "Exempt from rate limiting"
+    
+    # Dashboard permissions
+    "dashboard:view": "View dashboard"
+
+# API security
+api:
+  # API key authentication
+  api_keys:
+    enabled: true
+    header_name: "X-API-Key"
+    prefix: "dds_"
+    key_length: 32
+    expiration_days: 365
+    allow_ip_restriction: true
+  
+  # Rate limiting
+  rate_limiting:
+    enabled: true
+    default_requests_per_minute: 60
+    authenticated_requests_per_minute: 300
+    admin_requests_per_minute: 1000
+    
+    per_endpoint:
+      "/api/auth/login": 10
+      "/api/auth/register": 5
+      "/api/detections": 120
+      "/api/alerts": 120
+      "/api/analytics": 30
+      "/api/export": 10
+    
+    # Burst protection
+    burst:
+      enabled: true
+      multiplier: 2
+      window_seconds: 5
+  
+  # JWT configuration
+  jwt:
+    algorithm: "RS256"
+    access_token_expiry_minutes: 30
+    refresh_token_expiry_days: 7
+    issuer: "drone-detector-system"
+    audience: "drone-detector-api"
+    
+    # RSA keys (for production)
+    rsa:
+      private_key_path: "/etc/ssl/private/jwt.key"
+      public_key_path: "/etc/ssl/certs/jwt.pub"
+    
+    # HMAC (for development)
+    hmac:
+      secret_key: "your-secret-key-change-in-production"
+  
+  # CORS
+  cors:
+    enabled: true
+    allowed_origins:
+      - "https://drone-detector.com"
+      - "https://*.drone-detector.com"
+      - "http://localhost:3000"
+      - "http://localhost:8080"
+    allowed_methods:
+      - "GET"
+      - "POST"
+      - "PUT"
+      - "DELETE"
+      - "PATCH"
+      - "OPTIONS"
+    allowed_headers:
+      - "Authorization"
+      - "Content-Type"
+      - "X-API-Key"
+      - "X-Request-ID"
+      - "Idempotency-Key"
+    expose_headers:
+      - "X-Request-ID"
+      - "X-RateLimit-Limit"
+      - "X-RateLimit-Remaining"
+      - "X-RateLimit-Reset"
+    allow_credentials: true
+    max_age: 86400
+
+# Network security
+network:
+  # TLS/SSL configuration
+  tls:
+    enabled: true
+    min_version: "TLSv1.2"
+    max_version: "TLSv1.3"
+    cipher_suites:
+      - "ECDHE-ECDSA-AES128-GCM-SHA256"
+      - "ECDHE-RSA-AES128-GCM-SHA256"
+      - "ECDHE-ECDSA-AES256-GCM-SHA384"
+      - "ECDHE-RSA-AES256-GCM-SHA384"
+    certificate:
+      cert_file: "/etc/ssl/certs/server.crt"
+      key_file: "/etc/ssl/private/server.key"
+      ca_file: "/etc/ssl/certs/ca.crt"
+  
+  # IP whitelisting/blacklisting
+  ip_filtering:
+    enabled: false
+    mode: "whitelist"  # whitelist or blacklist
+    whitelist:
+      - "192.168.1.0/24"
+      - "10.0.0.0/8"
+    blacklist:
+      - "203.0.113.0/24"
+  
+  # DDoS protection
+  ddos_protection:
+    enabled: true
+    max_connections_per_ip: 100
+    max_requests_per_second: 50
+    max_packet_size: 8192
+    syn_cookies: true
+  
+  # WebSocket security
+  websocket:
+    enabled: true
+    wss_only: true
+    max_message_size_mb: 10
+    ping_interval_seconds: 30
+    ping_timeout_seconds: 10
+    allowed_origins:
+      - "https://drone-detector.com"
+
+# Data security
+data:
+  # Encryption at rest
+  encryption_at_rest:
+    enabled: true
+    algorithm: "AES-256-GCM"
+    key_rotation_days: 90
+    key_path: "/etc/ssl/keys/data.key"
+    
+    # Encrypted fields
+    encrypted_fields:
+      - "passwords"
+      - "api_keys"
+      - "tokens"
+      - "credentials"
+  
+  # Encryption in transit
+  encryption_in_transit:
+    enabled: true
+    algorithm: "TLSv1.3"
+    certificate_validation: true
+  
+  # Database encryption
+  database:
+    encrypted_columns:
+      - table: "users"
+        columns: ["password_hash", "email", "phone"]
+      - table: "api_keys"
+        columns: ["key_hash"]
+      - table: "remote_id_messages"
+        columns: ["uas_id", "operator_id"]
+  
+  # File encryption
+  files:
+    enabled: true
+    algorithm: "AES-256-GCM"
+    iq_recordings: true
+    exports: true
+    logs: false
+
+# Audit logging
+audit:
+  enabled: true
+  log_all_requests: true
+  log_sensitive_actions: true
+  log_auth_events: true
+  log_config_changes: true
+  log_data_access: true
+  log_data_modifications: true
+  
+  # Retention
+  retention_days: 90
+  
+  # Excluded endpoints (reduce noise)
+  excluded_paths:
+    - "/health"
+    - "/metrics"
+    - "/api/docs"
+    - "/api/redoc"
+  
+  # Sensitive actions to log
+  sensitive_actions:
+    - "login"
+    - "logout"
+    - "password_change"
+    - "password_reset"
+    - "user_create"
+    - "user_delete"
+    - "role_change"
+    - "permission_change"
+    - "config_change"
+    - "data_export"
+    - "data_delete"
+    - "system_restart"
+    - "factory_reset"
+
+# Input validation
+input_validation:
+  enabled: true
+  
+  # SQL injection prevention
+  sql_injection:
+    enabled: true
+    escape_strings: true
+    use_parameterized_queries: true
+  
+  # XSS prevention
+  xss:
+    enabled: true
+    sanitize_html: true
+    strip_scripts: true
+    allowed_tags:
+      - "b"
+      - "i"
+      - "em"
+      - "strong"
+      - "a"
+  
+  # File upload validation
+  file_uploads:
+    allowed_extensions:
+      - ".iq"
+      - ".csv"
+      - ".json"
+      - ".npy"
+      - ".h5"
+    max_file_size_mb: 100
+    scan_for_malware: true
+  
+  # Request validation
+  request:
+    max_body_size_mb: 10
+    max_header_size_kb: 8
+    max_url_length: 2048
+    allowed_content_types:
+      - "application/json"
+      - "multipart/form-data"
+      - "application/x-www-form-urlencoded"
+
+# Security monitoring
+monitoring:
+  # Intrusion detection
+  intrusion_detection:
+    enabled: true
+    patterns:
+      - "sql_injection"
+      - "xss"
+      - "path_traversal"
+      - "command_injection"
+      - "scanning"
+      - "brute_force"
+    
+    # Alert on detection
+    alert_on_detection: true
+    block_on_detection: false
+    
+    # Thresholds
+    thresholds:
+      failed_logins_per_minute: 10
+      invalid_api_keys_per_minute: 20
+      malicious_patterns_per_minute: 5
+  
+  # Security event logging
+  security_events:
+    enabled: true
+    log_to_file: true
+    log_to_syslog: true
+    forward_to_siem: false
+    siem_endpoint: ""
+  
+  # Vulnerability scanning
+  vulnerability_scanning:
+    enabled: true
+    scan_interval_hours: 24
+    dependencies: true
+    containers: true
+    notify_on_critical: true
+
+# Backup and disaster recovery
+backup:
+  enabled: true
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention_days: 30
+  
+  # Backup types
+  types:
+    - database
+    - configurations
+    - recordings
+    - exports
+  
+  # Encryption
+  encrypt_backups: true
+  encryption_key: ""  # Path to key file
+  
+  # Storage
+  storage_path: "/backups/drone-detector"
+  remote_storage:
+    enabled: false
+    type: "s3"  # s3, azure, gcs
+    bucket: "drone-detector-backups"
+    region: "us-east-1"
+    access_key: ""
+    secret_key: ""
+
+# Compliance
+compliance:
+  # GDPR
+  gdpr:
+    enabled: true
+    data_retention_days: 30
+    anonymize_personal_data: true
+    right_to_access: true
+    right_to_be_forgotten: true
+    breach_notification: true
+    breach_notification_delay_hours: 72
+  
+  # HIPAA (if applicable)
+  hipaa:
+    enabled: false
+    audit_controls: true
+    integrity_controls: true
+    transmission_security: true
+    access_controls: true
+  
+  # FAA Part 89 (Remote ID)
+  faa_part89:
+    enabled: true
+    compliance_check: true
+    audit_remote_id: true
+
+# Security alerts
+alerts:
+  enabled: true
+  
+  # Alert conditions
+  conditions:
+    - multiple_failed_logins
+    - suspicious_ip
+    - configuration_change
+    - data_breach_suspected
+    - malware_detected
+    - unauthorized_access_attempt
+  
+  # Notification methods
+  notifications:
+    email: true
+    sms: true
+    slack: true
+    webhook: false
+  
+  # Escalation
+  escalation:
+    enabled: true
+    levels:
+      - level: 1
+        timeout_minutes: 5
+        notify: ["security_team"]
+      - level: 2
+        timeout_minutes: 15
+        notify: ["security_manager"]
+      - level: 3
+        timeout_minutes: 30
+        notify: ["cso", "cio"]
+
+# Penetration testing
+penetration_testing:
+  enabled: false
+  schedule: "0 3 * * 0"  # Weekly on Sunday at 3 AM
+  tools:
+    - "nmap"
+    - "nikto"
+    - "sqlmap"
+    - "burpsuite"
+  report_path: "/var/log/security/pen_test"
+
+# Emergency procedures
+emergency:
+  # Emergency lockout
+  emergency_lockout:
+    enabled: true
+    trigger_on_suspicious_activity: true
+    manual_trigger: true
+    lockout_duration_minutes: 60
+  
+  # Emergency contacts
+  contacts:
+    - name: "Security Team"
+      email: "security@drone-detector.com"
+      phone: "+1234567890"
+      pager: "security@drone-detector.com"
+  
+  # Emergency actions
+  actions:
+    - "block_all_external_access"
+    - "notify_security_team"
+    - "increase_logging"
+    - "enable_debug_mode"
+
+# Example configurations for different environments
+environments:
+  development:
+    general:
+      mode: "permissive"
+      environment: "development"
+      headers:
+        hsts: false
+        csp: false
+    
+    authentication:
+      session_timeout_minutes: 480
+      mfa:
+        enabled: false
+    
+    tls:
+      enabled: false
+    
+    ip_filtering:
+      enabled: false
+    
+    audit:
+      enabled: false
+    
+    encryption_at_rest:
+      enabled: false
+    
+    backup:
+      enabled: false
+  
+  staging:
+    general:
+      mode: "normal"
+      environment: "staging"
+    
+    authentication:
+      mfa:
+        enabled: true
+        required_for_roles:
+          - admin
+    
+    tls:
+      enabled: true
+      min_version: "TLSv1.2"
+    
+    ip_filtering:
+      enabled: false
+    
+    audit:
+      enabled: true
+    
+    encryption_at_rest:
+      enabled: true
+    
+    backup:
+      enabled: true
+  
+  production:
+    general:
+      mode: "strict"
+      environment: "production"
+    
+    authentication:
+      mfa:
+        enabled: true
+        required_for_roles:
+          - admin
+          - operator
+    
+    api:
+      api_keys:
+        enabled: true
+      rate_limiting:
+        enabled: true
+    
+    tls:
+      enabled: true
+      min_version: "TLSv1.2"
+    
+    ip_filtering:
+      enabled: true
+      mode: "whitelist"
+    
+    audit:
+      enabled: true
+      log_all_requests: true
+    
+    encryption_at_rest:
+      enabled: true
+    
+    backup:
+      enabled: true
+    
+    intrusion_detection:
+      enabled: true
+      block_on_detection: true
+
+# Emergency override (for critical situations)
+emergency_override:
+  enabled: false
+  duration_minutes: 30
+  reason: ""
+  authorized_by: ""
+  changes:
+    - "disable_rate_limiting"
+    - "bypass_authentication"
+    - "disable_ip_filtering"

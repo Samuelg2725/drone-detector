@@ -1,0 +1,74 @@
+# config/mock_config.yaml
+# Configuration for mock hardware mode
+
+mock:
+  enabled: true                    # Use mock instead of real hardware
+  synthetic_mode: true             # Generate synthetic data vs playback
+  simulate_latency_ms: 5           # Simulate hardware latency (0 for no latency)
+  simulate_errors: false           # Randomly simulate hardware errors
+  error_rate: 0.01                 # 1% error rate when simulate_errors=true
+  
+  # Predefined scenarios
+  scenarios:
+    - name: "dji_mavic_2.4g_active"
+      drone_type: "DJI Mavic 3"
+      center_freq: 2412000000
+      snr_db: 15
+      duration: 30
+      
+    - name: "dji_mavic_5.8g_active"
+      drone_type: "DJI Mavic 3"
+      center_freq: 5825000000
+      snr_db: 18
+      duration: 30
+      
+    - name: "fpv_analog_5.8g"
+      drone_type: "FPV Analog"
+      center_freq: 5800000000
+      snr_db: 12
+      duration: 30
+      
+    - name: "noise_only"
+      drone_type: null
+      center_freq: 2400000000
+      snr_db: -20
+      duration: infinity
+      
+    - name: "interference_wifi"
+      drone_type: "Interference"
+      center_freq: 2450000000
+      snr_db: 5
+      duration: infinity
+  
+  # Auto-inject drone signals randomly
+  auto_inject:
+    enabled: true
+    probability: 0.3               # 30% chance of drone in scanned band
+    duration_min: 5                # Minimum drone presence in seconds
+    duration_max: 30               # Maximum drone presence in seconds
+    
+  # Frequency band definitions for auto-injection
+  bands:
+    2.4g:
+      center: 2400000000
+      width: 100000000
+      drones: ["dji_mavic_2.4g_active", "interference_wifi"]
+    
+    5.8g:
+      center: 5800000000
+      width: 200000000
+      drones: ["dji_mavic_5.8g_active", "fpv_analog_5.8g"]
+
+# Hardware settings (used even in mock mode for realism)
+rf_settings:
+  sample_rate: 10000000            # 10 MSps
+  frequencies:
+    - 2400000000                   # 2.4 GHz
+    - 5200000000                   # 5.2 GHz
+    - 5800000000                   # 5.8 GHz
+  scan_interval: 0.5              # seconds between frequency hops
+
+gain_settings:
+  lna_gain: 16
+  vga_gain: 20
+  rf_amp: false

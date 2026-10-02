@@ -1,0 +1,594 @@
+name: Code Linting
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - feature/*
+      - bugfix/*
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+# Environment variables
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # ============================================================================
+  # Python Linting
+  # ============================================================================
+  python-lint:
+    name: Python Linting
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -e .
+          
+      # Black formatting
+      - name: Check code formatting with Black
+        run: |
+          black --check --diff --color app/ tests/ scripts/
+          
+      # isort import sorting
+      - name: Check import sorting with isort
+        run: |
+          isort --check-only --diff --profile black app/ tests/ scripts/
+          
+      # flake8 style guide
+      - name: Lint with flake8
+        run: |
+          flake8 app/ tests/ scripts/ \
+            --max-line-length=120 \
+            --count \
+            --statistics \
+            --show-source \
+            --exit-zero
+          
+      # pylint code analysis
+      - name: Lint with pylint
+        run: |
+          pylint app/ \
+            --exit-zero \
+            --output-format=parseable \
+            --reports=y \
+            --score=y \
+            --fail-under=8.0
+          
+      # mypy type checking
+      - name: Type check with mypy
+        run: |
+          mypy app/ \
+            --ignore-missing-imports \
+            --no-strict-optional \
+            --warn-redundant-casts \
+            --warn-unused-ignores \
+            --warn-return-any \
+            --warn-unreachable \
+            --disallow-untyped-defs \
+            --disallow-any-unimported
+          
+      # pydocstyle docstring check
+      - name: Check docstrings with pydocstyle
+        run: |
+          pydocstyle app/ \
+            --convention=google \
+            --add-ignore=D100,D104,D107,D203,D212,D213,D404,D406,D407,D413
+          
+      # bandit security linter
+      - name: Security lint with bandit
+        run: |
+          bandit -r app/ \
+            -c pyproject.toml \
+            -f json \
+            -o bandit-report.json \
+            -ll \
+            -iii
+          
+      - name: Upload bandit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
+          
+      # vulture dead code detection
+      - name: Check for dead code with vulture
+        run: |
+          pip install vulture
+          vulture app/ --min-confidence 70 --exclude tests/
+          
+      # radon code complexity
+      - name: Check code complexity with radon
+        run: |
+          pip install radon
+          radon cc app/ -a -nb --total-average
+          radon mi app/ -s
+          
+      # prospector comprehensive linting
+      - name: Comprehensive linting with prospector
+        run: |
+          pip install prospector
+          prospector app/ --output-format grouped --die-on-tool-error
+
+  # ============================================================================
+  # Python Security Scanning (Deep)
+  # ============================================================================
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install safety pip-audit
+          
+      - name: Run safety check
+        run: |
+          safety check -r requirements.txt --full-report --json > safety-report.json
+          
+      - name: Run pip-audit
+        run: |
+          pip-audit --requirement requirements.txt --format json --output pip-audit.json
+          
+      - name: Check for known vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-fs-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          
+      - name: Upload security reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            safety-report.json
+            pip-audit.json
+            trivy-fs-results.sarif
+            
+      - name: Upload to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs-results.sarif
+
+  # ============================================================================
+  # YAML Linting
+  # ============================================================================
+  yaml-lint:
+    name: YAML Linting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install yamllint
+        run: pip install yamllint
+          
+      - name: Lint YAML files
+        run: |
+          yamllint -c .yamllint config/ --strict
+          yamllint -c .yamllint .github/workflows/ --strict
+          yamllint -c .yamllint docker-compose*.yml --strict
+          
+      - name: Validate YAML syntax
+        run: |
+          for file in $(find . -name "*.yaml" -o -name "*.yml"); do
+            python -c "import yaml; yaml.safe_load(open('$file'))" || exit 1
+          done
+
+  # ============================================================================
+  # JSON Linting
+  # ============================================================================
+  json-lint:
+    name: JSON Linting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          
+      - name: Install jsonlint
+        run: npm install -g jsonlint
+          
+      - name: Lint JSON files
+        run: |
+          find . -name "*.json" -not -path "./node_modules/*" -not -path "./venv/*" -exec jsonlint -q {} \;
+          
+      - name: Validate JSON schema
+        run: |
+          pip install jsonschema
+          python scripts/validate_json_schemas.py
+
+  # ============================================================================
+  # Dockerfile Linting
+  # ============================================================================
+  docker-lint:
+    name: Dockerfile Linting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Run hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: docker/Dockerfile
+          failure-threshold: warning
+          
+      - name: Run hadolint on dev Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: docker/Dockerfile.dev
+          failure-threshold: warning
+          
+      - name: Run hadolint on prod Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: docker/Dockerfile.prod
+          failure-threshold: warning
+          
+      - name: Check for Docker best practices
+        run: |
+          dockerfilelint docker/Dockerfile
+          dockerfilelint docker/Dockerfile.dev
+          dockerfilelint docker/Dockerfile.prod
+
+  # ============================================================================
+  # Shell Script Linting
+  # ============================================================================
+  shell-lint:
+    name: Shell Script Linting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Run shellcheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          ignore_paths: .venv venv .git
+          severity: error
+          
+      - name: Run shfmt (formatting)
+        run: |
+          sudo snap install shfmt
+          shfmt -d -i 2 -ci -sr scripts/*.sh docker/*.sh
+
+  # ============================================================================
+  # Markdown Linting
+  # ============================================================================
+  markdown-lint:
+    name: Markdown Linting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Run markdownlint
+        uses: articulate/actions-markdownlint@v1
+        with:
+          config: .markdownlint.json
+          files: '**/*.md'
+          ignore: node_modules venv .venv
+          
+      - name: Check markdown links
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: 'yes'
+          use-verbose-mode: 'yes'
+          config-file: '.mlc_config.json'
+
+  # ============================================================================
+  # Documentation Linting
+  # ============================================================================
+  docs-lint:
+    name: Documentation Linting
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install docs dependencies
+        run: |
+          pip install mkdocs mkdocs-material pymdown-extensions
+          pip install linkchecker
+          
+      - name: Build documentation
+        run: |
+          mkdocs build --strict
+          
+      - name: Check documentation links
+        run: |
+          linkchecker docs/ --ignore-url=.*github.com.* --timeout=10
+          
+      - name: Check spelling
+        uses: crate-ci/typos@master
+        with:
+          files: ./docs/
+
+  # ============================================================================
+  # Pre-commit Hooks
+  # ============================================================================
+  pre-commit:
+    name: Pre-commit Hooks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install pre-commit
+        run: |
+          pip install pre-commit
+          
+      - name: Run pre-commit hooks
+        run: |
+          pre-commit run --all-files --show-diff-on-failure
+          
+      - name: Validate pre-commit config
+        run: |
+          pre-commit validate-config .pre-commit-config.yaml
+
+  # ============================================================================
+  # GitHub Actions Linting
+  # ============================================================================
+  actions-lint:
+    name: GitHub Actions Linting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Run actionlint
+        uses: reviewdog/action-actionlint@v1
+        with:
+          reporter: github-pr-review
+          fail_on_error: true
+          
+      - name: Validate workflow syntax
+        run: |
+          for file in .github/workflows/*.yml; do
+            echo "Validating $file"
+            python -c "import yaml; yaml.safe_load(open('$file'))"
+          done
+
+  # ============================================================================
+  # SQL Linting
+  # ============================================================================
+  sql-lint:
+    name: SQL Linting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Run sqlfluff
+        uses: sqlfluff/sqlfluff-github-action@release
+        with:
+          dialect: postgres
+          paths: migrations/
+          config: .sqlfluff
+          
+      - name: Validate SQL syntax
+        run: |
+          for file in $(find migrations/ -name "*.sql"); do
+            psql -f "$file" --echo-errors --set ON_ERROR_STOP=on 2>&1 || true
+          done
+        env:
+          PGHOST: localhost
+          PGUSER: test_user
+          PGDATABASE: test_db
+
+  # ============================================================================
+  # Complexity Analysis
+  # ============================================================================
+  complexity:
+    name: Code Complexity Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install complexity tools
+        run: |
+          pip install radon xenon
+          
+      - name: Run radon complexity
+        run: |
+          radon cc app/ -a -nb --total-average -s -i tests/
+          radon mi app/ -s -i tests/
+          radon raw app/ -s -i tests/
+          
+      - name: Run xenon threshold check
+        run: |
+          xenon --max-absolute B --max-modules A --max-average A app/
+          
+      - name: Generate complexity report
+        run: |
+          radon cc app/ -a -nb --json > complexity-report.json
+          
+      - name: Upload complexity report
+        uses: actions/upload-artifact@v4
+        with:
+          name: complexity-report
+          path: complexity-report.json
+
+  # ============================================================================
+  # Lint Summary
+  # ============================================================================
+  summary:
+    name: Lint Summary
+    runs-on: ubuntu-latest
+    needs: [python-lint, security-scan, yaml-lint, json-lint, docker-lint, shell-lint, markdown-lint, docs-lint, pre-commit, actions-lint, sql-lint, complexity]
+    if: always()
+    
+    steps:
+      - name: Check all linting passed
+        id: check
+        run: |
+          if [ "${{ needs.python-lint.result }}" == "success" ] && \
+             [ "${{ needs.security-scan.result }}" == "success" ] && \
+             [ "${{ needs.yaml-lint.result }}" == "success" ] && \
+             [ "${{ needs.json-lint.result }}" == "success" ] && \
+             [ "${{ needs.docker-lint.result }}" == "success" ] && \
+             [ "${{ needs.shell-lint.result }}" == "success" ] && \
+             [ "${{ needs.markdown-lint.result }}" == "success" ] && \
+             [ "${{ needs.docs-lint.result }}" == "success" ] && \
+             [ "${{ needs.pre-commit.result }}" == "success" ] && \
+             [ "${{ needs.actions-lint.result }}" == "success" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Generate lint report
+        if: always()
+        run: |
+          cat > lint-report.md << EOF
+          # Lint Results Summary
+          
+          | Job | Status |
+          |-----|--------|
+          | Python Linting | ${{ needs.python-lint.result }} |
+          | Security Scan | ${{ needs.security-scan.result }} |
+          | YAML Linting | ${{ needs.yaml-lint.result }} |
+          | JSON Linting | ${{ needs.json-lint.result }} |
+          | Docker Linting | ${{ needs.docker-lint.result }} |
+          | Shell Linting | ${{ needs.shell-lint.result }} |
+          | Markdown Linting | ${{ needs.markdown-lint.result }} |
+          | Documentation Linting | ${{ needs.docs-lint.result }} |
+          | Pre-commit Hooks | ${{ needs.pre-commit.result }} |
+          | GitHub Actions Linting | ${{ needs.actions-lint.result }} |
+          | SQL Linting | ${{ needs.sql-lint.result }} |
+          | Complexity Analysis | ${{ needs.complexity.result }} |
+          
+          **Overall Status:** ${{ steps.check.outputs.status }}
+          EOF
+          
+      - name: Upload lint report
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-report
+          path: lint-report.md
+          
+      - name: Post PR comment
+        if: github.event_name == 'pull_request' && steps.check.outputs.status == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '## ❌ Linting Failed\n\nPlease check the lint report for details.\n\n[View Lint Report](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})'
+            });
+            
+      - name: Fail workflow if linting failed
+        if: steps.check.outputs.status == 'failure'
+        run: exit 1
+
+  # ============================================================================
+  # Notification
+  # ============================================================================
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    needs: [summary]
+    if: always() && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Send Slack notification
+        uses: slackapi/slack-github-action@v1.24
+        with:
+          payload: |
+            {
+              "text": "${{ needs.summary.result == 'success' && '✅' || '❌' }} Linting Results",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "${{ needs.summary.result == 'success' && '✅' || '❌' }} *Linting Completed*\nRepository: ${{ github.repository }}\nBranch: ${{ github.ref_name }}\nStatus: ${{ needs.summary.result }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

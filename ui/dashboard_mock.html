@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drone Detector - Live Dashboard</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0a0f1e; font-family: 'Segoe UI', sans-serif; color: #eef2ff; padding: 20px; }
+        .dashboard { max-width: 1400px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding: 15px 20px; background: #0f1422cc; border-radius: 20px; border: 1px solid #2a334a; }
+        .logo h1 { background: linear-gradient(135deg, #a5f0ff, #4f9eff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+        .status-badge { background: #1e2a3a; padding: 6px 16px; border-radius: 40px; font-size: 0.85rem; display: flex; align-items: center; gap: 8px; }
+        .led-green { width: 10px; height: 10px; background: #2ecc71; border-radius: 50%; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { opacity: 0.4; } 100% { opacity: 1; } }
+        .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 20px; }
+        .card { background: #0f1422cc; border: 1px solid #2a334a; border-radius: 20px; padding: 18px; }
+        .card-full { grid-column: span 4; }
+        .card-wide { grid-column: span 2; }
+        .card-title { font-size: 0.8rem; text-transform: uppercase; color: #8d9bb0; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+        .stat-value { font-size: 2rem; font-weight: 700; }
+        .threat-critical { color: #ff5e7c; }
+        .threat-high { color: #ffaa44; }
+        .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 600; display: inline-block; }
+        .badge-critical { background: #ff5e7c20; color: #ff7e98; border: 1px solid #ff5e7c50; }
+        .badge-high { background: #ffaa4420; color: #ffcc66; border: 1px solid #ffaa4450; }
+        .badge-medium { background: #ffaa4420; color: #ffaa66; border: 1px solid #ffaa4450; }
+        .badge-low { background: #5bc0be20; color: #7fe0de; border: 1px solid #5bc0be50; }
+        .map-container { height: 300px; width: 100%; border-radius: 16px; overflow: hidden; margin-top: 8px; }
+        .spectrum-canvas { height: 160px; width: 100%; }
+        .flex-between { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+        .detection-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+        .detection-table th, .detection-table td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #232a3f; }
+        button { background: #1e2b3c; border: none; color: white; padding: 6px 14px; border-radius: 20px; cursor: pointer; }
+        button:hover { background: #2e4a6a; }
+        .inject-btn { background: linear-gradient(135deg, #2ecc71, #27ae60); font-weight: bold; }
+        @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } .card-full, .card-wide { grid-column: span 1; } }
+    </style>
+</head>
+<body>
+<div class="dashboard">
+    <div class="header">
+        <div class="logo"><h1><i class="fas fa-drone"></i> Drone Detector</h1></div>
+        <div class="status-badge"><span class="led-green"></span><span>MOCK MODE | TDOA ACTIVE</span></div>
+    </div>
+
+    <div class="grid">
+        <div class="card"><div class="card-title"><i class="fas fa-radar"></i> ACTIVE DETECTIONS</div><div class="stat-value" id="activeCount">0</div></div>
+        <div class="card"><div class="card-title"><i class="fas fa-exclamation-triangle"></i> HIGHEST THREAT</div><div class="stat-value threat-high" id="maxThreat">—</div></div>
+        <div class="card"><div class="card-title"><i class="fas fa-chart-line"></i> AVG SNR</div><div class="stat-value" id="avgSNR">0<span style="font-size:0.9rem;"> dB</span></div></div>
+        <div class="card"><div class="card-title"><i class="fas fa-microchip"></i> DRONE MODELS</div><div class="stat-value" id="droneModels">0</div></div>
+    </div>
+
+    <div class="grid">
+        <div class="card card-wide">
+            <div class="card-title"><i class="fas fa-chart-simple"></i> REAL-TIME SPECTRUM (2.4GHz – 5.8GHz)</div>
+            <canvas id="spectrumChart" class="spectrum-canvas"></canvas>
+            <div class="flex-between"><span><i class="fas fa-broadcast-tower"></i> Live RF spectrum</span><span id="peakFreq">—</span></div>
+        </div>
+        <div class="card card-wide">
+            <div class="card-title"><i class="fas fa-map-marker-alt"></i> DRONE GEOLOCATION (TDOA)</div>
+            <div id="map" class="map-container"></div>
+            <div class="flex-between"><small>TDOA hyperbolic multilateration</small><button id="injectBtn" class="inject-btn"><i class="fas fa-plus"></i> Inject Drone</button></div>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="card card-full">
+            <div class="card-title"><i class="fas fa-list-ul"></i> DETECTION EVENTS</div>
+            <div style="overflow-x: auto; max-height: 300px;">
+                <table class="detection-table"><thead><tr><th>ID</th><th>Drone Model</th><th>Frequency</th><th>Threat</th><th>SNR</th><th>Position</th><th>Time</th></tr></thead><tbody id="detectionTable"><tr><td colspan="7" style="text-align:center;">Loading...</td></tr></tbody></table>
+            </div>
+            <div class="flex-between" style="margin-top: 12px;"><span><i class="fas fa-bell"></i> Audio alerts for threats</span><button id="clearBtn"><i class="fas fa-trash-alt"></i> Clear All</button></div>
+        </div>
+    </div>
+</div>
+
+<script>
+const DRONE_TYPES = [
+    { name: "DJI Mavic 3", freq: 2412, threat: "HIGH", baseSNR: 28 },
+    { name: "DJI Phantom 4", freq: 2450, threat: "MEDIUM", baseSNR: 26 },
+    { name: "FPV Analog 5.8G", freq: 5800, threat: "LOW", baseSNR: 22 },
+    { name: "Autel Evo II", freq: 2420, threat: "MEDIUM", baseSNR: 24 },
+    { name: "DJI Inspire 3", freq: 2465, threat: "CRITICAL", baseSNR: 32 }
+];
+
+let detections = [];
+let nextId = 1;
+let map = null;
+let markers = {};
+let spectrumChart = null;
+let audioCtx = null;
+
+const CENTER = { lat: 37.7749, lng: -122.4194 };
+
+function playTone(severity) {
+    try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.frequency.value = severity === 'CRITICAL' ? 880 : 660;
+        gain.gain.value = 0.15;
+        osc.start();
+        gain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.6);
+        osc.stop(audioCtx.currentTime + 0.5);
+    } catch(e) {}
+}
+
+function generatePosition() {
+    const angle = Math.random() * Math.PI * 2;
+    const r = Math.sqrt(Math.random()) * 0.015;
+    return { lat: CENTER.lat + Math.cos(angle) * r, lng: CENTER.lng + Math.sin(angle) * r / Math.cos(CENTER.lat * Math.PI/180) };
+}
+
+function generateDetection() {
+    const template = DRONE_TYPES[Math.floor(Math.random() * DRONE_TYPES.length)];
+    const snr = Math.min(45, Math.max(12, template.baseSNR + (Math.random() * 12 - 6)));
+    let threat = template.threat;
+    if (threat === "MEDIUM" && snr > 32) threat = "HIGH";
+    if (threat === "LOW" && snr > 30) threat = "MEDIUM";
+    const pos = generatePosition();
+    return {
+        id: nextId++,
+        model: template.name,
+        freq: template.freq + (Math.random() * 20 - 10),
+        threat: threat,
+        snr: Math.floor(snr),
+        lat: pos.lat,
+        lng: pos.lng,
+        time: new Date().toLocaleTimeString()
+    };
+}
+
+function addDetection(detection) {
+    detections.unshift(detection);
+    if (detections.length > 20) detections.pop();
+    if (detection.threat === "CRITICAL") playTone("CRITICAL");
+    else if (detection.threat === "HIGH" && Math.random() < 0.3) playTone("HIGH");
+    updateUI();
+    updateMap();
+}
+
+function updateUI() {
+    document.getElementById('activeCount').innerText = detections.length;
+    let maxThreat = detections.length ? detections.reduce((a,b) => {
+        let order = {CRITICAL:4,HIGH:3,MEDIUM:2,LOW:1};
+        return order[a.threat] > order[b.threat] ? a : b;
+    }) : null;
+    document.getElementById('maxThreat').innerHTML = maxThreat ? maxThreat.threat : "—";
+    let avgSnr = detections.length ? (detections.reduce((s,d)=>s+d.snr,0)/detections.length).toFixed(0) : 0;
+    document.getElementById('avgSNR').innerHTML = `${avgSnr}<span style="font-size:0.9rem;"> dB</span>`;
+    let uniqueModels = new Set(detections.map(d=>d.model)).size;
+    document.getElementById('droneModels').innerText = uniqueModels;
+    
+    const tbody = document.getElementById('detectionTable');
+    if (!detections.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">No detections yet...</td></tr>';
+    } else {
+        tbody.innerHTML = detections.map(d => `
+            <tr><td>#${d.id}</td><td><i class="fas fa-drone"></i> ${d.model}</td><td>${d.freq.toFixed(0)} MHz</td>
+            <td><span class="badge badge-${d.threat.toLowerCase()}">${d.threat}</span></td>
+            <td>${d.snr} dB</td><td>${d.lat.toFixed(4)}°, ${d.lng.toFixed(4)}°</td><td>${d.time}</td></tr>
+        `).join('');
+    }
+}
+
+function initMap() {
+    map = L.map('map').setView([CENTER.lat, CENTER.lng], 13);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap',
+        subdomains: 'abcd'
+    }).addTo(map);
+    
+    // Add sensor stations
+    [[37.789, -122.432, "North", "#3b82f6"], [37.769, -122.408, "East", "#10b981"], [37.779, -122.445, "West", "#f59e0b"]].forEach(s => {
+        L.marker([s[0], s[1]], { icon: L.divIcon({ html: `<div style="background:${s[3]}; width:24px;height:24px;border-radius:50%;border:2px solid white;text-align:center;"><i class="fas fa-broadcast-tower" style="color:white;font-size:12px;line-height:20px;"></i></div>`, iconSize: [24,24] }) }).addTo(map).bindTooltip(`${s[2]} Sensor`);
+    });
+}
+
+function updateMap() {
+    if (!map) return;
+    Object.values(markers).forEach(m => map.removeLayer(m));
+    markers = {};
+    
+    detections.slice(0, 12).forEach(d => {
+        let color = d.threat === 'CRITICAL' ? '#ff4455' : (d.threat === 'HIGH' ? '#ffaa33' : (d.threat === 'MEDIUM' ? '#ffaa77' : '#33cc99'));
+        let icon = L.divIcon({ html: `<div style="background:${color}; width:28px;height:28px;border-radius:50%;border:2px solid white;display:flex;align-items:center;justify-content:center;"><i class="fas fa-drone" style="color:white;font-size:14px;"></i><span style="position:absolute;bottom:-16px;font-size:10px;background:#000000aa;padding:2px 6px;border-radius:10px;">${d.model.split(' ')[0]}</span></div>`, iconSize: [28,28] });
+        let m = L.marker([d.lat, d.lng], { icon }).addTo(map);
+        m.bindTooltip(`${d.model}<br>Threat: ${d.threat} | SNR:${d.snr}dB`);
+        markers[d.id] = m;
+    });
+}
+
+function initSpectrum() {
+    const ctx = document.getElementById('spectrumChart').getContext('2d');
+    const labels = [];
+    for (let i = 2400; i <= 5850; i += 30) labels.push(i);
+    spectrumChart = new Chart(ctx, {
+        type: 'line',
+        data: { labels: labels, datasets: [{ label: 'Power', data: Array(labels.length).fill(20), borderColor: '#3fe0ff', backgroundColor: 'rgba(46,140,200,0.2)', fill: true, tension: 0.2, pointRadius: 0 }] },
+        options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { maxTicksLimit: 6 }, title: { display: true, text: 'Frequency (MHz)' } }, y: { min: 10, max: 85, title: { display: true, text: 'dBFS' } } } }
+    });
+}
+
+function updateSpectrum() {
+    if (!spectrumChart) return;
+    const data = spectrumChart.data.datasets[0].data;
+    for (let i = 0; i < data.length; i++) {
+        let freq = 2400 + i * 30;
+        let power = 15 + Math.random() * 12;
+        detections.slice(0, 6).forEach(d => {
+            let diff = Math.abs(freq - d.freq);
+            if (diff < 40) power += Math.min(35, 30 * (1 - diff/60) + (d.snr/35)*15);
+        });
+        data[i] = Math.min(82, power);
+    }
+    spectrumChart.update('none');
+    let maxIdx = data.indexOf(Math.max(...data));
+    document.getElementById('peakFreq').innerHTML = `<i class="fas fa-chart-line"></i> Peak: ${2400 + maxIdx * 30} MHz`;
+}
+
+function injectDrone() {
+    addDetection(generateDetection());
+}
+
+function clearAll() {
+    detections = [];
+    nextId = 1;
+    updateUI();
+    updateMap();
+}
+
+setInterval(() => { addDetection(generateDetection()); }, 4000);
+setInterval(() => { if (detections.length) updateSpectrum(); }, 1500);
+setInterval(() => { if (detections.length) updateMap(); }, 2000);
+
+document.getElementById('injectBtn').addEventListener('click', injectDrone);
+document.getElementById('clearBtn').addEventListener('click', clearAll);
+document.body.addEventListener('click', () => { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); });
+
+initMap();
+initSpectrum();
+for (let i = 0; i < 4; i++) addDetection(generateDetection());
+</script>
+</body>
+</html>

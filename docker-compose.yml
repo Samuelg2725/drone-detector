@@ -1,0 +1,95 @@
+services:
+  drone-detector:
+    # Use pre-built image instead of building locally
+    image: ghcr.io/drone-detector/drone-detector:latest
+    container_name: drone-detector
+    restart: unless-stopped
+    ports:
+      - "8888:8888"  # API (changed from 8000 to match expected port)
+      - "8889:8889"  # WebSocket (changed from 8082)
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+      - ./models:/app/models
+      - ./logs:/app/data/logs
+    environment:
+      - MODE=${MODE:-live}
+      - DEBUG=${DEBUG:-false}
+      - MOCK_ENABLED=${MOCK_ENABLED:-true}  # Set to true for testing
+      - ENVIRONMENT=development
+      - LOG_LEVEL=DEBUG
+    # Comment out devices and privileged for now (mock mode)
+    # devices:
+    #   - /dev/bus/usb:/dev/bus/usb
+    # privileged: true
+    networks:
+      - drone-net
+    depends_on:
+      - redis
+      - postgres
+
+  redis:
+    image: redis:7-alpine
+    container_name: drone-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - drone-net
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: drone-db
+    environment:
+      POSTGRES_DB: drone_detector
+      POSTGRES_USER: drone
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - drone-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U drone -d drone_detector"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: drone-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    networks:
+      - drone-net
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: drone-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - drone-net
+    profiles:
+      - monitoring
+
+networks:
+  drone-net:
+    driver: bridge
+
+volumes:
+  redis-data:
+  postgres-data:
+  prometheus-data:
+  grafana-data:

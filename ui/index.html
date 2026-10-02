@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drone Detector - Live Dashboard</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="css/main.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+    <link rel="stylesheet" href="css/panels.css">
+    <link rel="stylesheet" href="css/status.css">
+    <link rel="stylesheet" href="css/responsive.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <i class="fas fa-drone"></i>
+                <span>Drone Detector</span>
+            </div>
+            <nav class="nav-menu">
+                <a href="#" class="nav-item active" data-page="dashboard">
+                    <i class="fas fa-tachometer-alt"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a href="#" class="nav-item" data-page="map">
+                    <i class="fas fa-map-marked-alt"></i>
+                    <span>Live Map</span>
+                </a>
+                <a href="#" class="nav-item" data-page="spectrum">
+                    <i class="fas fa-chart-line"></i>
+                    <span>Spectrum</span>
+                </a>
+                <a href="#" class="nav-item" data-page="detections">
+                    <i class="fas fa-list"></i>
+                    <span>Detections</span>
+                </a>
+                <a href="#" class="nav-item" data-page="analytics">
+                    <i class="fas fa-chart-bar"></i>
+                    <span>Analytics</span>
+                </a>
+                <a href="#" class="nav-item" data-page="settings">
+                    <i class="fas fa-cog"></i>
+                    <span>Settings</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="status-badge">
+                    <span class="status-dot online"></span>
+                    <span>API Connected</span>
+                </div>
+                <div class="version">v1.0.0</div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="top-bar">
+                <div class="page-title">
+                    <h1 id="pageTitle">Dashboard</h1>
+                </div>
+                <div class="header-stats">
+                    <div class="stat-badge">
+                        <i class="fas fa-drone"></i>
+                        <span id="activeDrones">0</span>
+                        <small>Active Drones</small>
+                    </div>
+                    <div class="stat-badge">
+                        <i class="fas fa-chart-line"></i>
+                        <span id="totalDetections">0</span>
+                        <small>Total Detections</small>
+                    </div>
+                    <div class="stat-badge">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <span id="activeAlerts">0</span>
+                        <small>Active Alerts</small>
+                    </div>
+                </div>
+                <button class="inject-btn" onclick="injectRandomDrone()">
+                    <i class="fas fa-plus"></i> Inject Drone
+                </button>
+            </header>
+
+            <!-- Dashboard Page -->
+            <div id="dashboardPage" class="page active">
+                <!-- Stats Cards -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-drone"></i></div>
+                        <div class="stat-info">
+                            <h3 id="statDroneTypes">0</h3>
+                            <p>Drone Types</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-chart-line"></i></div>
+                        <div class="stat-info">
+                            <h3 id="statDetectionRate">0</h3>
+                            <p>Detections/Hour</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-bell"></i></div>
+                        <div class="stat-info">
+                            <h3 id="statHighThreat">0</h3>
+                            <p>High Threat</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-chart-simple"></i></div>
+                        <div class="stat-info">
+                            <h3 id="statAvgConfidence">0</h3>
+                            <p>Avg Confidence</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- REAL-TIME SPECTRUM (2.4GHz – 5.8GHz) -->
+                <div class="panel spectrum-panel">
+                    <div class="panel-header">
+                        <h3><i class="fas fa-waveform"></i> REAL-TIME SPECTRUM (2.4GHz – 5.8GHz)</h3>
+                        <div class="spectrum-controls">
+                            <button class="btn-sm" onclick="toggleSpectrumRange()">
+                                <i class="fas fa-chart-line"></i> 2.4-5.8 GHz
+                            </button>
+                            <button class="btn-sm" onclick="startSpectrumLive()">
+                                <i class="fas fa-play"></i> Live
+                            </button>
+                            <button class="btn-sm" onclick="stopSpectrumLive()">
+                                <i class="fas fa-stop"></i> Stop
+                            </button>
+                        </div>
+                    </div>
+                    <div class="panel-body">
+                        <div class="spectrum-container">
+                            <canvas id="fullSpectrumCanvas" width="900" height="350"></canvas>
+                        </div>
+                        <div class="spectrum-legend">
+                            <div class="legend-item"><span class="legend-color" style="background: #00ff88;"></span>Normal Signal</div>
+                            <div class="legend-item"><span class="legend-color" style="background: #ffaa00;"></span>Drone Detected (2.4GHz)</div>
+                            <div class="legend-item"><span class="legend-color" style="background: #ff6600;"></span>Drone Detected (5.8GHz)</div>
+                            <div class="legend-item"><span class="legend-color" style="background: #ff0000;"></span>Critical Signal</div>
+                            <div class="legend-item"><span class="legend-color" style="background: #888;"></span>Noise Floor</div>
+                        </div>
+                        <div id="spectrumStats" class="spectrum-stats"></div>
+                    </div>
+                </div>
+
+                <!-- Threat Distribution & Activity -->
+                <div class="two-columns">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <h3><i class="fas fa-chart-pie"></i> Threat Distribution</h3>
+                        </div>
+                        <div class="panel-body">
+                            <canvas id="threatChart" width="400" height="250"></canvas>
+                        </div>
+                    </div>
+                    <div class="panel">
+                        <div class="panel-header">
+                            <h3><i class="fas fa-chart-line"></i> Frequency Activity</h3>
+                        </div>
+                        <div class="panel-body">
+                            <canvas id="frequencyActivityChart" width="400" height="250"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recent Detections -->
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3><i class="fas fa-clock"></i> Recent Detections</h3>
+                        <button class="btn-sm" onclick="refreshDetections()">
+                            <i class="fas fa-sync-alt"></i> Refresh
+                        </button>
+                    </div>
+                    <div class="panel-body">
+                        <div class="table-container">
+                            <table class="detection-table" id="recentTable">
+                                <thead>
+                                    <tr><th>Time</th><th>Drone Type</th><th>Threat</th><th>Confidence</th><th>Frequency</th><th>Bandwidth</th><th>Signal Power</th></tr>
+                                </thead>
+                                <tbody id="recentTableBody">
+                                    <tr><td colspan="7" class="loading">Loading detections......</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Map Page -->
+            <div id="mapPage" class="page">
+                <div class="panel full-height">
+                    <div class="panel-body no-padding">
+                        <div id="droneMap" style="height: calc(100vh - 120px);"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Spectrum Page (Detailed) -->
+            <div id="spectrumPage" class="page">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3><i class="fas fa-chart-line"></i> Detailed Spectrum Analyzer</h3>
+                        <div>
+                            <button class="btn-sm" onclick="setSpectrumBand('2.4')">2.4 GHz Band</button>
+                            <button class="btn-sm" onclick="setSpectrumBand('5.8')">5.8 GHz Band</button>
+                            <button class="btn-sm" onclick="setSpectrumBand('full')">Full Range</button>
+                        </div>
+                    </div>
+                    <div class="panel-body">
+                        <canvas id="detailSpectrumCanvas" width="800" height="400"></canvas>
+                        <div class="spectrum-stats" id="detailSpectrumStats"></div>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3><i class="fas fa-chart-area"></i> Waterfall (Spectrogram)</h3>
+                    </div>
+                    <div class="panel-body">
+                        <canvas id="waterfallCanvas" width="800" height="200"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Detections Page -->
+            <div id="detectionsPage" class="page">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3><i class="fas fa-history"></i> All Detections</h3>
+                        <div>
+                            <input type="text" id="searchInput" placeholder="Search..." class="search-input">
+                            <select id="threatFilter" class="filter-select">
+                                <option value="">All Threats</option>
+                                <option value="low">Low</option>
+                                <option value="medium">Medium</option>
+                                <option value="high">High</option>
+                                <option value="critical">Critical</option>
+                            </select>
+                            <select id="bandFilter" class="filter-select">
+                                <option value="">All Bands</option>
+                                <option value="2.4">2.4 GHz</option>
+                                <option value="5.8">5.8 GHz</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="panel-body">
+                        <div class="table-container">
+                            <table class="detection-table" id="detectionsTable">
+                                <thead>
+                                    <tr><th>Time</th><th>Drone Type</th><th>Threat</th><th>Confidence</th><th>Frequency</th><th>Bandwidth</th><th>Power</th><th>Location</th></tr>
+                                </thead>
+                                <tbody id="detectionsTableBody">
+                                    <tr><td colspan="8" class="loading">Loading......</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Analytics Page -->
+            <div id="analyticsPage" class="page">
+                <div class="two-columns">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <h3><i class="fas fa-chart-line"></i> Detection Trends</h3>
+                            <select id="trendPeriod" onchange="updateTrends()">
+                                <option value="hour">Last Hour</option>
+                                <option value="day">Last 24 Hours</option>
+                                <option value="week">Last Week</option>
+                            </select>
+                        </div>
+                        <div class="panel-body">
+                            <canvas id="trendChart" width="400" height="250"></canvas>
+                        </div>
+                    </div>
+                    <div class="panel">
+                        <div class="panel-header">
+                            <h3><i class="fas fa-chart-bar"></i> Drone Type Distribution</h3>
+                        </div>
+                        <div class="panel-body">
+                            <canvas id="droneTypeChart" width="400" height="250"></canvas>
+                        </div>
+                    </div>
+                </div>
+                <div class="two-columns">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <h3><i class="fas fa-chart-pie"></i> Frequency Band Usage</h3>
+                        </div>
+                        <div class="panel-body">
+                            <canvas id="bandUsageChart" width="400" height="250"></canvas>
+                        </div>
+                    </div>
+                    <div class="panel">
+                        <div class="panel-header">
+                            <h3><i class="fas fa-clock"></i> Hourly Activity</h3>
+                        </div>
+                        <div class="panel-body">
+                            <canvas id="hourlyChart" width="400" height="250"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Page -->
+            <div id="settingsPage" class="page">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3><i class="fas fa-sliders-h"></i> Spectrum Settings</h3>
+                    </div>
+                    <div class="panel-body">
+                        <div class="settings-form">
+                            <div class="setting-group">
+                                <label>Refresh Rate (ms)</label>
+                                <input type="range" id="spectrumRefreshRate" min="100" max="2000" step="100" value="500">
+                                <span id="refreshRateValue">500ms</span>
+                            </div>
+                            <div class="setting-group">
+                                <label>Show Peaks</label>
+                                <input type="checkbox" id="showPeaks" checked>
+                            </div>
+                            <div class="setting-group">
+                                <label>Peak Hold</label>
+                                <input type="checkbox" id="peakHold">
+                            </div>
+                            <div class="setting-group">
+                                <label>Smoothing</label>
+                                <input type="range" id="smoothing" min="0" max="10" step="1" value="3">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3><i class="fas fa-bell"></i> Alert Settings</h3>
+                    </div>
+                    <div class="panel-body">
+                        <div class="settings-form">
+                            <div class="setting-group">
+                                <label>Desktop Notifications</label>
+                                <input type="checkbox" id="alertsEnabled">
+                            </div>
+                            <div class="setting-group">
+                                <label>Sound Alerts</label>
+                                <input type="checkbox" id="soundEnabled">
+                            </div>
+                            <div class="setting-group">
+                                <label>Auto-refresh Interval (ms)</label>
+                                <input type="number" id="refreshInterval" value="2000" step="500">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3><i class="fas fa-info-circle"></i> System Info</h3>
+                    </div>
+                    <div class="panel-body" id="systemInfo">
+                        Loading...
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="js/app.js"></script>
+    <script src="js/websocket.js"></script>
+    <script src="js/dashboard.js"></script>
+    <script src="js/spectrum_view.js"></script>
+    <script src="js/map_view.js"></script>
+    <script src="js/charts.js"></script>
+    <script src="js/alerts.js"></script>
+    <script src="js/controls.js"></script>
+<script src="js/spectrum_simple.js"></script>
+</body>
+</html>

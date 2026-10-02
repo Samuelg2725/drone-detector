@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Gear/Cog Icon -->
+    <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor"/>
+    
+    <!-- Gear Teeth -->
+    <path d="M12,3 L12,4.5" stroke="currentColor"/>
+    <path d="M12,19.5 L12,21" stroke="currentColor"/>
+    <path d="M3,12 L4.5,12" stroke="currentColor"/>
+    <path d="M19.5,12 L21,12" stroke="currentColor"/>
+    <path d="M5.6,5.6 L6.7,6.7" stroke="currentColor"/>
+    <path d="M17.3,17.3 L18.4,18.4" stroke="currentColor"/>
+    <path d="M18.4,5.6 L17.3,6.7" stroke="currentColor"/>
+    <path d="M6.7,17.3 L5.6,18.4" stroke="currentColor"/>
+    
+    <!-- Inner Details -->
+    <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+</svg>

@@ -1,0 +1,27 @@
+services:
+  drone-detector:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    container_name: drone-detector
+    restart: unless-stopped
+    ports:
+      - "8888:8888"
+      - "8889:8889"
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+      - ./models:/app/models
+      - ./logs:/app/data/logs
+    environment:
+      - MODE=${MODE:-live}
+      - DEBUG=${DEBUG:-false}
+      - MOCK_ENABLED=${MOCK_ENABLED:-true}
+      - ENVIRONMENT=development
+      - LOG_LEVEL=DEBUG
+      - USE_MOCK_HARDWARE=true
+    networks:
+      - drone-net
+    depends_on:
+      - redis
+      - postgres

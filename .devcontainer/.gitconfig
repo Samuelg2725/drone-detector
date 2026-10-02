@@ -1,0 +1,19 @@
+[user]
+    name = Drone Detector Developer
+    email = dev@drone-detector.local
+
+[core]
+    editor = nano
+    autocrlf = input
+
+[alias]
+    co = checkout
+    br = branch
+    ci = commit
+    st = status
+    lg = log --oneline --graph --decorate
+    unstage = reset HEAD --
+    last = log -1 HEAD
+
+[init]
+    defaultBranch = main

@@ -1,0 +1,612 @@
+# ============================================================================
+# Drone Detection System - Remote ID Configuration
+# Version: 2.0.0
+# Description: Configuration for Remote ID detection, decoding, and processing
+# ============================================================================
+
+# Remote ID General Settings
+remote_id:
+  enabled: true
+  version: "1.0"
+  description: "ASTM F3411-22 Remote ID configuration"
+  
+  # Scanning configuration
+  scanning:
+    enabled: true
+    interval_ms: 100          # Scan interval in milliseconds
+    timeout_ms: 5000          # Timeout for Remote ID acquisition
+    max_messages_per_second: 100
+    
+    # BLE (Bluetooth Low Energy) Scanning
+    ble:
+      enabled: true
+      channels: [37, 38, 39]  # BLE advertising channels
+      active_scan: true
+      scan_window_ms: 30
+      scan_interval_ms: 100
+      duplicate_filtering: true
+      rssi_threshold: -90     # Minimum RSSI to process (dBm)
+      
+    # WiFi Beacon Scanning
+    wifi:
+      enabled: true
+      channels: [1, 6, 11]    # 2.4 GHz channels
+      listen_interval_ms: 100
+      beacon_timeout_ms: 5000
+      rssi_threshold: -85
+  
+  # Decoding configuration
+  decoding:
+    # ASTM F3411-22 Message Types
+    message_types:
+      - BASIC_ID           # Basic ID (0x00)
+      - LOCATION           # Location/Vector (0x01)
+      - AUTHENTICATION     # Authentication (0x02)
+      - SELF_ID            # Self ID (0x03)
+      - SYSTEM             # System (0x04)
+      - OPERATOR_ID        # Operator ID (0x05)
+      
+    # Message priority (lower number = higher priority)
+    priority:
+      BASIC_ID: 1
+      LOCATION: 2
+      SELF_ID: 3
+      SYSTEM: 4
+      OPERATOR_ID: 5
+      AUTHENTICATION: 6
+    
+    # Validation rules
+    validation:
+      max_age_seconds: 10        # Maximum age for position data
+      min_confidence: 0.5        # Minimum confidence for decoding
+      require_checksum: true
+      validate_crc: true
+      require_timestamp: true
+    
+    # Data fields to extract
+    extract_fields:
+      - uas_id           # Unmanned Aircraft System ID
+      - operator_id      # Operator ID
+      - latitude         # Current latitude
+      - longitude        # Current longitude
+      - altitude         # Current altitude (meters)
+      - speed            # Ground speed (m/s)
+      - heading          # Heading (degrees)
+      - vertical_speed   # Vertical speed (m/s)
+      - timestamp        # Message timestamp
+      - rssi             # Signal strength
+      - frequency        # Received frequency
+  
+  # Message filtering
+  filtering:
+    # Ignore messages older than this
+    max_age_seconds: 30
+    
+    # Update rate limits (messages per second per drone)
+    rate_limits:
+      BASIC_ID: 1
+      LOCATION: 10
+      SELF_ID: 1
+      SYSTEM: 1
+      OPERATOR_ID: 1
+      AUTHENTICATION: 1
+    
+    # RSSI filters
+    rssi:
+      min: -100               # Minimum RSSI to process
+      max: -20                # Maximum RSSI to process
+      hysteresis: 5          # RSSI hysteresis
+    
+    # Duplicate detection
+    duplicate:
+      enabled: true
+      window_ms: 5000        # Duplicate detection window
+      ignore_fields: ["rssi", "timestamp"]
+  
+  # Position tracking
+  tracking:
+    enabled: true
+    max_track_points: 1000    # Maximum track points per drone
+    track_timeout_seconds: 60  # Timeout for inactive tracks
+    interpolation: true       # Interpolate missing positions
+    smoothing: true           # Apply Kalman smoothing
+    min_update_rate_hz: 1     # Minimum update rate for tracking
+    
+    # Kalman filter parameters
+    kalman_filter:
+      process_noise: 1.0      # Process noise (m/s²)
+      measurement_noise: 10.0  # Measurement noise (meters)
+      initial_error: 100.0    # Initial error covariance
+  
+  # Geofencing integration
+  geofencing:
+    enabled: true
+    check_interval_ms: 1000
+    violation_action: "alert"  # alert, log, ignore
+    buffer_distance_m: 50      # Buffer distance around geofence
+    no_fly_zones:
+      - airports
+      - military_bases
+      - government_buildings
+      - schools
+      - hospitals
+  
+  # Alert configuration
+  alerts:
+    # Alert on specific conditions
+    conditions:
+      - no_remote_id           # Drone without Remote ID
+      - invalid_data           # Invalid Remote ID data
+      - stale_data             # Stale position data
+      - geofence_violation     # Entered restricted area
+      - multiple_drones        # Multiple drones detected
+      - spoofing_suspected     # Possible spoofing
+      - operator_unauthorized  # Unauthorized operator
+    
+    # Alert thresholds
+    thresholds:
+      max_age_seconds: 5       # Alert if data older than this
+      min_confidence: 0.7      # Minimum confidence for alerts
+      max_position_error_m: 50 # Maximum position error for alerts
+      geofence_buffer_m: 25    # Alert when within this distance
+    
+    # Severity mapping
+    severity:
+      no_remote_id: "HIGH"
+      invalid_data: "MEDIUM"
+      stale_data: "MEDIUM"
+      geofence_violation: "CRITICAL"
+      multiple_drones: "HIGH"
+      spoofing_suspected: "CRITICAL"
+      operator_unauthorized: "HIGH"
+  
+  # Database storage
+  storage:
+    enabled: true
+    retention_days: 30
+    max_records: 1000000
+    
+    # Tables to store
+    tables:
+      - remote_id_messages     # Raw message data
+      - remote_id_sessions     # Drone sessions
+      - remote_id_tracks       # Position tracks
+      - geofence_violations    # Violation records
+    
+    # Indexes for performance
+    indexes:
+      - field: "uas_id"
+        type: "hash"
+      - field: "timestamp"
+        type: "btree"
+      - field: "latitude, longitude"
+        type: "gist"
+  
+  # API configuration
+  api:
+    endpoints:
+      - "/api/remote-id/messages"
+      - "/api/remote-id/tracks"
+      - "/api/remote-id/sessions"
+      - "/api/remote-id/active"
+    
+    rate_limits:
+      messages: 1000
+      tracks: 100
+      sessions: 50
+    
+    response_format: "json"
+    include_metadata: true
+
+# BLE (Bluetooth Low Energy) Configuration
+ble:
+  enabled: true
+  
+  # BLE device settings
+  device:
+    adapter: "hci0"           # Bluetooth adapter
+    timeout_ms: 5000          # Device timeout
+    retry_count: 3
+  
+  # Scanning parameters
+  scanning:
+    passive: false            # Active scanning
+    filter_duplicates: true
+    report_invalid: false
+    duration_ms: 500
+  
+  # UUIDs for Remote ID
+  remote_id_uuids:
+    - "0xFFFA"                # ASTM F3411 Service UUID
+    - "0000FFFA-0000-1000-8000-00805F9B34FB"
+  
+  # Manufacturer-specific data
+  manufacturer_ids:
+    DJI: 0x0005
+    AUTEL: 0x0010
+    SKYDIO: 0x0020
+    PARROT: 0x0030
+    HUBSAN: 0x0040
+  
+  # Message format
+  message_format:
+    header_size: 2
+    max_payload_size: 255
+    frame_type: "LE Advertising Report"
+    
+  # RSSI calibration
+  rssi_calibration:
+    reference_distance_m: 1
+    reference_rssi: -59
+    path_loss_exponent: 2.0
+
+# WiFi Beacon Configuration
+wifi:
+  enabled: true
+  
+  # WiFi device settings
+  device:
+    interface: "wlan0"        # WiFi interface
+    monitor_mode: true
+    channel_hop: true
+  
+  # Scanning parameters
+  scanning:
+    channels: [1, 6, 11]
+    dwell_time_ms: 100
+    hop_interval_ms: 50
+  
+  # Beacon frame types
+  beacon_types:
+    - "Probe Request"
+    - "Beacon"
+    - "Vendor Specific"
+  
+  # OUI (Organizationally Unique Identifier) for Remote ID
+  remote_id_ouis:
+    - "00:11:22:33:44:55"     # Example OUI
+    - "AA:BB:CC:DD:EE:FF"
+  
+  # Information Elements
+  information_elements:
+    - id: 221                 # Vendor Specific IE
+      name: "Remote ID"
+      required: true
+    
+    - id: 127                 # Extended IE
+      name: "Location"
+      required: false
+
+# Message Decoding Rules
+decoding_rules:
+  # Basic ID Message (0x00)
+  basic_id:
+    fields:
+      - name: "uas_id_type"
+        offset: 0
+        size: 1
+        type: "uint8"
+      - name: "uas_id"
+        offset: 1
+        size: 20
+        type: "string"
+      - name: "id_type"
+        offset: 21
+        size: 1
+        type: "uint8"
+    
+    id_types:
+      0: "Serial Number"
+      1: "CAA Registration ID"
+      2: "UTM Assignment"
+  
+  # Location/Vector Message (0x01)
+  location:
+    fields:
+      - name: "status"
+        offset: 0
+        size: 1
+        type: "uint8"
+      - name: "direction"
+        offset: 1
+        size: 2
+        type: "uint16"
+        scale: 0.01
+      - name: "speed_horizontal"
+        offset: 3
+        size: 2
+        type: "uint16"
+        scale: 0.01
+      - name: "speed_vertical"
+        offset: 5
+        size: 2
+        type: "int16"
+        scale: 0.01
+      - name: "latitude"
+        offset: 7
+        size: 4
+        type: "int32"
+        scale: 1e-7
+      - name: "longitude"
+        offset: 11
+        size: 4
+        type: "int32"
+        scale: 1e-7
+      - name: "altitude_baro"
+        offset: 15
+        size: 4
+        type: "int32"
+        scale: 0.01
+      - name: "altitude_geo"
+        offset: 19
+        size: 4
+        type: "int32"
+        scale: 0.01
+      - name: "height_type"
+        offset: 23
+        size: 1
+        type: "uint8"
+      - name: "horiz_accuracy"
+        offset: 24
+        size: 1
+        type: "uint8"
+      - name: "vert_accuracy"
+        offset: 25
+        size: 1
+        type: "uint8"
+      - name: "baro_accuracy"
+        offset: 26
+        size: 1
+        type: "uint8"
+      - name: "speed_accuracy"
+        offset: 27
+        size: 1
+        type: "uint8"
+      - name: "timestamp"
+        offset: 28
+        size: 4
+        type: "uint32"
+        scale: 0.1
+  
+  # Authentication Message (0x02)
+  authentication:
+    fields:
+      - name: "auth_type"
+        offset: 0
+        size: 1
+        type: "uint8"
+      - name: "auth_data"
+        offset: 1
+        size: 23
+        type: "bytes"
+      - name: "auth_page"
+        offset: 24
+        size: 1
+        type: "uint8"
+      - name: "last_page_index"
+        offset: 25
+        size: 1
+        type: "uint8"
+      - name: "length"
+        offset: 26
+        size: 1
+        type: "uint8"
+      - name: "timestamp"
+        offset: 27
+        size: 4
+        type: "uint32"
+        scale: 0.1
+  
+  # Self ID Message (0x03)
+  self_id:
+    fields:
+      - name: "description_type"
+        offset: 0
+        size: 1
+        type: "uint8"
+      - name: "description"
+        offset: 1
+        size: 23
+        type: "string"
+    
+    description_types:
+      0: "Text"
+      1: "Emergency"
+      2: "Extended"
+  
+  # System Message (0x04)
+  system:
+    fields:
+      - name: "operator_location_type"
+        offset: 0
+        size: 1
+        type: "uint8"
+      - name: "classification_type"
+        offset: 1
+        size: 1
+        type: "uint8"
+      - name: "operator_latitude"
+        offset: 2
+        size: 4
+        type: "int32"
+        scale: 1e-7
+      - name: "operator_longitude"
+        offset: 6
+        size: 4
+        type: "int32"
+        scale: 1e-7
+      - name: "area_count"
+        offset: 10
+        size: 2
+        type: "uint16"
+      - name: "area_radius"
+        offset: 12
+        size: 2
+        type: "uint16"
+        scale: 0.1
+      - name: "area_ceiling"
+        offset: 14
+        size: 4
+        type: "int32"
+        scale: 0.01
+      - name: "area_floor"
+        offset: 18
+        size: 4
+        type: "int32"
+        scale: 0.01
+      - name: "category"
+        offset: 22
+        size: 1
+        type: "uint8"
+      - name: "class"
+        offset: 23
+        size: 1
+        type: "uint8"
+      - name: "timestamp"
+        offset: 24
+        size: 4
+        type: "uint32"
+        scale: 0.1
+  
+  # Operator ID Message (0x05)
+  operator_id:
+    fields:
+      - name: "operator_id_type"
+        offset: 0
+        size: 1
+        type: "uint8"
+      - name: "operator_id"
+        offset: 1
+        size: 20
+        type: "string"
+    
+    operator_id_types:
+      0: "CAA"
+      1: "FAA"
+
+# Session Management
+session_management:
+  enabled: true
+  session_timeout_seconds: 300   # 5 minutes
+  merge_window_seconds: 30        # Merge sessions within this window
+  
+  # Session state machine
+  states:
+    - "ACTIVE"
+    - "INACTIVE"
+    - "LOST"
+    - "RECOVERED"
+  
+  # Session statistics
+  statistics:
+    - total_duration
+    - max_altitude
+    - max_speed
+    - total_distance
+    - track_points_count
+
+# Spoofing Detection
+spoofing_detection:
+  enabled: true
+  
+  # Detection methods
+  methods:
+    - "gps_inconsistency"      # GPS position inconsistencies
+    - "velocity_mismatch"      # Speed/velocity mismatch
+    - "altitude_anomaly"       # Unrealistic altitude changes
+    - "multiple_ids"           # Multiple IDs from same source
+    - "signal_analysis"        # Signal characteristic analysis
+  
+  # Thresholds
+  thresholds:
+    max_speed_mps: 50          # Max plausible speed (m/s)
+    max_vertical_speed_mps: 10 # Max vertical speed (m/s)
+    max_altitude_m: 5000       # Max plausible altitude (m)
+    max_acceleration_mps2: 20  # Max acceleration (m/s²)
+    
+  # Scoring
+  scoring:
+    spoofing_score_threshold: 0.7
+    suspicious_score_threshold: 0.4
+    
+    weights:
+      gps_inconsistency: 0.35
+      velocity_mismatch: 0.25
+      altitude_anomaly: 0.15
+      multiple_ids: 0.15
+      signal_analysis: 0.10
+
+# Privacy and Compliance
+privacy:
+  # Data anonymization
+  anonymization:
+    enabled: true
+    hash_algorithm: "sha256"
+    salt: "remote_id_salt_2024"
+    
+    fields_to_anonymize:
+      - "uas_id"
+      - "operator_id"
+      - "serial_number"
+  
+  # Data retention
+  retention:
+    raw_messages_days: 7
+    processed_data_days: 30
+    aggregated_data_days: 365
+  
+  # Compliance with regulations
+  compliance:
+    - "FAA Part 89"
+    - "EASA"
+    - "ASTM F3411-22"
+
+# Performance Tuning
+performance:
+  # Buffer sizes
+  buffers:
+    message_queue_size: 10000
+    decode_buffer_size: 4096
+    track_buffer_size: 1000
+  
+  # Thread pools
+  thread_pools:
+    decoder_threads: 4
+    processor_threads: 2
+    writer_threads: 1
+  
+  # Batch processing
+  batch:
+    enabled: true
+    batch_size: 100
+    flush_interval_ms: 1000
+
+# Debug and Logging
+debug:
+  enabled: false
+  log_raw_messages: false
+  log_decoded_data: false
+  log_errors: true
+  log_warnings: true
+  
+  # Sample rates for logging
+  sample_rates:
+    messages: 0.01      # Log 1% of messages
+    errors: 1.0         # Log all errors
+    warnings: 0.1       # Log 10% of warnings
+
+# Example Configuration
+example:
+  # BLE Scanner with HackRF
+  hackrf_ble_scanner:
+    enabled: true
+    frequency: 2402000000
+    sample_rate: 2000000
+    gain: 20
+  
+  # WiFi Scanner with RTL-SDR
+  rtl_wifi_scanner:
+    enabled: true
+    frequency: 2412000000
+    sample_rate: 2000000
+    gain: 30

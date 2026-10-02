@@ -1,0 +1,713 @@
+{
+  "version": "2.0.0",
+  "last_updated": "2024-01-15T00:00:00Z",
+  "description": "Database of drone signal signatures for identification and classification",
+  
+  "signatures": {
+    "dji": {
+      "manufacturer": "DJI",
+      "description": "DJI drones using OcuSync transmission technology",
+      "signatures": [
+        {
+          "model": "Mavic 3",
+          "variants": ["Mavic 3", "Mavic 3 Cine", "Mavic 3 Pro", "Mavic 3 Classic"],
+          "frequency_bands": [
+            {
+              "band": "2.4 GHz",
+              "center_freq": 2412000000,
+              "min_freq": 2400000000,
+              "max_freq": 2483500000,
+              "bandwidth": 20000000,
+              "modulation": "OFDM",
+              "subcarriers": 256,
+              "cyclic_prefix": 64
+            },
+            {
+              "band": "5.8 GHz",
+              "center_freq": 5825000000,
+              "min_freq": 5725000000,
+              "max_freq": 5875000000,
+              "bandwidth": 20000000,
+              "modulation": "OFDM",
+              "subcarriers": 256,
+              "cyclic_prefix": 64
+            }
+          ],
+          "hopping_pattern": {
+            "enabled": true,
+            "channels": 32,
+            "dwell_time_ms": 10,
+            "sequence": [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31]
+          },
+          "power_characteristics": {
+            "max_power_dbm": 20,
+            "typical_power_dbm": 15,
+            "min_power_dbm": 5,
+            "pulse_width_ms": 0.8,
+            "duty_cycle": 0.4
+          },
+          "spectral_features": {
+            "peak_count": 3,
+            "peak_spacing_hz": 125000,
+            "roll_off_factor": 0.85,
+            "flatness": 0.9
+          },
+          "temporal_features": {
+            "burst_duration_ms": 1.2,
+            "burst_interval_ms": 100,
+            "packet_rate": 10
+          },
+          "confidence_threshold": 0.85,
+          "signature_hash": "dji_mavic_3_ocu4"
+        },
+        {
+          "model": "Mavic 2",
+          "variants": ["Mavic 2 Pro", "Mavic 2 Zoom", "Mavic 2 Enterprise"],
+          "frequency_bands": [
+            {
+              "band": "2.4 GHz",
+              "center_freq": 2412000000,
+              "min_freq": 2400000000,
+              "max_freq": 2483500000,
+              "bandwidth": 20000000,
+              "modulation": "OFDM",
+              "subcarriers": 128,
+              "cyclic_prefix": 32
+            },
+            {
+              "band": "5.8 GHz",
+              "center_freq": 5825000000,
+              "min_freq": 5725000000,
+              "max_freq": 5875000000,
+              "bandwidth": 20000000,
+              "modulation": "OFDM",
+              "subcarriers": 128,
+              "cyclic_prefix": 32
+            }
+          ],
+          "hopping_pattern": {
+            "enabled": true,
+            "channels": 16,
+            "dwell_time_ms": 15,
+            "sequence": [1, 4, 7, 10, 13, 16, 2, 5, 8, 11, 14, 3, 6, 9, 12, 15]
+          },
+          "power_characteristics": {
+            "max_power_dbm": 19,
+            "typical_power_dbm": 14,
+            "min_power_dbm": 4,
+            "pulse_width_ms": 0.6,
+            "duty_cycle": 0.35
+          },
+          "spectral_features": {
+            "peak_count": 2,
+            "peak_spacing_hz": 100000,
+            "roll_off_factor": 0.8,
+            "flatness": 0.85
+          },
+          "confidence_threshold": 0.85,
+          "signature_hash": "dji_mavic_2_ocu3"
+        },
+        {
+          "model": "Mini 3",
+          "variants": ["Mini 3", "Mini 3 Pro"],
+          "frequency_bands": [
+            {
+              "band": "2.4 GHz",
+              "center_freq": 2412000000,
+              "min_freq": 2400000000,
+              "max_freq": 2483500000,
+              "bandwidth": 10000000,
+              "modulation": "OFDM",
+              "subcarriers": 64,
+              "cyclic_prefix": 32
+            }
+          ],
+          "hopping_pattern": {
+            "enabled": false
+          },
+          "power_characteristics": {
+            "max_power_dbm": 18,
+            "typical_power_dbm": 12,
+            "min_power_dbm": 3,
+            "pulse_width_ms": 0.5,
+            "duty_cycle": 0.3
+          },
+          "spectral_features": {
+            "peak_count": 1,
+            "peak_spacing_hz": 0,
+            "roll_off_factor": 0.75,
+            "flatness": 0.8
+          },
+          "confidence_threshold": 0.8,
+          "signature_hash": "dji_mini_3_ocu3"
+        },
+        {
+          "model": "Phantom 4",
+          "variants": ["Phantom 4 Pro", "Phantom 4 Advanced"],
+          "frequency_bands": [
+            {
+              "band": "2.4 GHz",
+              "center_freq": 2412000000,
+              "min_freq": 2400000000,
+              "max_freq": 2483500000,
+              "bandwidth": 20000000,
+              "modulation": "OFDM",
+              "subcarriers": 128,
+              "cyclic_prefix": 32
+            }
+          ],
+          "hopping_pattern": {
+            "enabled": true,
+            "channels": 32,
+            "dwell_time_ms": 12,
+            "sequence": [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32]
+          },
+          "power_characteristics": {
+            "max_power_dbm": 20,
+            "typical_power_dbm": 15,
+            "min_power_dbm": 5,
+            "pulse_width_ms": 0.7,
+            "duty_cycle": 0.4
+          },
+          "confidence_threshold": 0.85,
+          "signature_hash": "dji_phantom_4_lightbridge"
+        }
+      ]
+    },
+    
+    "autel": {
+      "manufacturer": "Autel",
+      "description": "Autel Robotics drones using Autel Link",
+      "signatures": [
+        {
+          "model": "EVO II",
+          "variants": ["EVO II Pro", "EVO II Dual", "EVO II Enterprise"],
+          "frequency_bands": [
+            {
+              "band": "2.4 GHz",
+              "center_freq": 2412000000,
+              "min_freq": 2400000000,
+              "max_freq": 2483500000,
+              "bandwidth": 20000000,
+              "modulation": "OFDM",
+              "subcarriers": 192,
+              "cyclic_prefix": 48
+            },
+            {
+              "band": "5.8 GHz",
+              "center_freq": 5825000000,
+              "min_freq": 5725000000,
+              "max_freq": 5875000000,
+              "bandwidth": 20000000,
+              "modulation": "OFDM",
+              "subcarriers": 192,
+              "cyclic_prefix": 48
+            }
+          ],
+          "hopping_pattern": {
+            "enabled": true,
+            "channels": 24,
+            "dwell_time_ms": 8,
+            "sequence": [1, 4, 7, 10, 13, 16, 19, 22, 2, 5, 8, 11, 14, 17, 20, 23]
+          },
+          "power_characteristics": {
+            "max_power_dbm": 19,
+            "typical_power_dbm": 14,
+            "min_power_dbm": 4,
+            "pulse_width_ms": 0.6,
+            "duty_cycle": 0.35
+          },
+          "spectral_features": {
+            "peak_count": 2,
+            "peak_spacing_hz": 110000,
+            "roll_off_factor": 0.82,
+            "flatness": 0.88
+          },
+          "confidence_threshold": 0.85,
+          "signature_hash": "autel_evo_ii_autellink"
+        },
+        {
+          "model": "EVO Lite",
+          "variants": ["EVO Lite", "EVO Lite+"],
+          "frequency_bands": [
+            {
+              "band": "2.4 GHz",
+              "center_freq": 2412000000,
+              "min_freq": 2400000000,
+              "max_freq": 2483500000,
+              "bandwidth": 20000000,
+              "modulation": "OFDM",
+              "subcarriers": 128,
+              "cyclic_prefix": 32
+            }
+          ],
+          "hopping_pattern": {
+            "enabled": true,
+            "channels": 16,
+            "dwell_time_ms": 10,
+            "sequence": [2, 6, 10, 14, 3, 7, 11, 15, 4, 8, 12, 16]
+          },
+          "power_characteristics": {
+            "max_power_dbm": 18,
+            "typical_power_dbm": 13,
+            "min_power_dbm": 3,
+            "pulse_width_ms": 0.5,
+            "duty_cycle": 0.3
+          },
+          "confidence_threshold": 0.8,
+          "signature_hash": "autel_evo_lite"
+        }
+      ]
+    },
+    
+    "skydio": {
+      "manufacturer": "Skydio",
+      "description": "Skydio autonomous drones",
+      "signatures": [
+        {
+          "model": "Skydio 2",
+          "variants": ["Skydio 2", "Skydio 2+", "Skydio X2"],
+          "frequency_bands": [
+            {
+              "band": "2.4 GHz",
+              "center_freq": 2412000000,
+              "min_freq": 2400000000,
+              "max_freq": 2483500000,
+              "bandwidth": 20000000,
+              "modulation": "OFDM",
+              "subcarriers": 256,
+              "cyclic_prefix": 64
+            },
+            {
+              "band": "5.8 GHz",
+              "center_freq": 5825000000,
+              "min_freq": 5725000000,
+              "max_freq": 5875000000,
+              "bandwidth": 20000000,
+              "modulation": "OFDM",
+              "subcarriers": 256,
+              "cyclic_prefix": 64
+            }
+          ],
+          "hopping_pattern": {
+            "enabled": true,
+            "channels": 40,
+            "dwell_time_ms": 6,
+            "sequence": [1, 5, 9, 13, 17, 21, 25, 29, 33, 37, 2, 6, 10, 14, 18, 22, 26, 30, 34, 38]
+          },
+          "power_characteristics": {
+            "max_power_dbm": 20,
+            "typical_power_dbm": 15,
+            "min_power_dbm": 5,
+            "pulse_width_ms": 0.4,
+            "duty_cycle": 0.45
+          },
+          "spectral_features": {
+            "peak_count": 3,
+            "peak_spacing_hz": 125000,
+            "roll_off_factor": 0.88,
+            "flatness": 0.92
+          },
+          "confidence_threshold": 0.85,
+          "signature_hash": "skydio_2_skylink"
+        }
+      ]
+    },
+    
+    "fpv": {
+      "manufacturer": "Generic FPV",
+      "description": "First Person View analog and digital systems",
+      "signatures": [
+        {
+          "model": "Analog FPV",
+          "variants": ["Analog NTSC", "Analog PAL", "TVL Standard"],
+          "frequency_bands": [
+            {
+              "band": "5.8 GHz",
+              "center_freq": 5800000000,
+              "min_freq": 5650000000,
+              "max_freq": 5950000000,
+              "bandwidth": 8000000,
+              "modulation": "FM",
+              "deviation_khz": 1500,
+              "video_standard": "NTSC/PAL"
+            }
+          ],
+          "channels": {
+            "band_A": [5865, 5845, 5825, 5805, 5785, 5765, 5745, 5725],
+            "band_B": [5733, 5752, 5771, 5790, 5809, 5828, 5847, 5866],
+            "band_E": [5705, 5685, 5665, 5645, 5885, 5905, 5925, 5945]
+          },
+          "power_characteristics": {
+            "max_power_dbm": 25,
+            "typical_power_dbm": 20,
+            "min_power_dbm": 10,
+            "bandwidth_mhz": 8,
+            "carrier_leakage": -20
+          },
+          "spectral_features": {
+            "peak_count": 1,
+            "peak_width_hz": 8000000,
+            "roll_off_factor": 0.7,
+            "sidebands": "symmetrical"
+          },
+          "confidence_threshold": 0.75,
+          "signature_hash": "fpv_analog_5_8g"
+        },
+        {
+          "model": "DJI Digital FPV",
+          "variants": ["DJI FPV System", "DJI Digital FPV Goggles"],
+          "frequency_bands": [
+            {
+              "band": "5.8 GHz",
+              "center_freq": 5800000000,
+              "min_freq": 5725000000,
+              "max_freq": 5875000000,
+              "bandwidth": 20000000,
+              "modulation": "OFDM",
+              "codec": "H.265",
+              "latency_ms": 28
+            }
+          ],
+          "channels": {
+            "available": [1, 2, 3, 4, 5, 6, 7, 8],
+            "frequencies_mhz": [5735, 5755, 5775, 5795, 5815, 5835, 5855, 5875]
+          },
+          "power_characteristics": {
+            "max_power_dbm": 20,
+            "typical_power_dbm": 15,
+            "min_power_dbm": 8,
+            "duty_cycle": 0.5
+          },
+          "confidence_threshold": 0.85,
+          "signature_hash": "dji_fpv_digital"
+        },
+        {
+          "model": "HDZero",
+          "variants": ["HDZero VTX", "HDZero Goggles"],
+          "frequency_bands": [
+            {
+              "band": "5.8 GHz",
+              "center_freq": 5800000000,
+              "min_freq": 5650000000,
+              "max_freq": 5950000000,
+              "bandwidth": 10000000,
+              "modulation": "OFDM",
+              "codec": "H.264",
+              "latency_ms": 15
+            }
+          ],
+          "power_characteristics": {
+            "max_power_dbm": 25,
+            "typical_power_dbm": 25,
+            "min_power_dbm": 25,
+            "duty_cycle": 0.6
+          },
+          "confidence_threshold": 0.8,
+          "signature_hash": "hdzero_digital"
+        },
+        {
+          "model": "Walksnail",
+          "variants": ["Walksnail Avatar", "Walksnail VTX"],
+          "frequency_bands": [
+            {
+              "band": "5.8 GHz",
+              "center_freq": 5800000000,
+              "min_freq": 5725000000,
+              "max_freq": 5875000000,
+              "bandwidth": 20000000,
+              "modulation": "OFDM",
+              "codec": "H.265",
+              "latency_ms": 32
+            }
+          ],
+          "power_characteristics": {
+            "max_power_dbm": 22,
+            "typical_power_dbm": 18,
+            "min_power_dbm": 10,
+            "duty_cycle": 0.48
+          },
+          "confidence_threshold": 0.8,
+          "signature_hash": "walksnail_digital"
+        }
+      ]
+    },
+    
+    "hubsan": {
+      "manufacturer": "Hubsan",
+      "description": "Hubsan consumer drones",
+      "signatures": [
+        {
+          "model": "Zino 2",
+          "variants": ["Zino 2", "Zino 2 Pro", "Zino 2 Plus"],
+          "frequency_bands": [
+            {
+              "band": "2.4 GHz",
+              "center_freq": 2412000000,
+              "min_freq": 2400000000,
+              "max_freq": 2483500000,
+              "bandwidth": 20000000,
+              "modulation": "OFDM"
+            }
+          ],
+          "power_characteristics": {
+            "max_power_dbm": 18,
+            "typical_power_dbm": 14,
+            "min_power_dbm": 4,
+            "duty_cycle": 0.35
+          },
+          "confidence_threshold": 0.75,
+          "signature_hash": "hubsan_zino_2"
+        }
+      ]
+    },
+    
+    "parrot": {
+      "manufacturer": "Parrot",
+      "description": "Parrot consumer drones",
+      "signatures": [
+        {
+          "model": "Anafi",
+          "variants": ["Anafi", "Anafi Thermal", "Anafi USA"],
+          "frequency_bands": [
+            {
+              "band": "2.4 GHz",
+              "center_freq": 2412000000,
+              "min_freq": 2400000000,
+              "max_freq": 2483500000,
+              "bandwidth": 20000000,
+              "modulation": "OFDM"
+            },
+            {
+              "band": "5.8 GHz",
+              "center_freq": 5825000000,
+              "min_freq": 5725000000,
+              "max_freq": 5875000000,
+              "bandwidth": 20000000,
+              "modulation": "OFDM"
+            }
+          ],
+          "hopping_pattern": {
+            "enabled": true,
+            "channels": 20,
+            "dwell_time_ms": 12
+          },
+          "power_characteristics": {
+            "max_power_dbm": 18,
+            "typical_power_dbm": 13,
+            "min_power_dbm": 3,
+            "duty_cycle": 0.4
+          },
+          "confidence_threshold": 0.8,
+          "signature_hash": "parrot_anafi"
+        }
+      ]
+    },
+    
+    "yuneec": {
+      "manufacturer": "Yuneec",
+      "description": "Yuneec consumer drones",
+      "signatures": [
+        {
+          "model": "Typhoon H",
+          "variants": ["Typhoon H", "Typhoon H Plus", "Typhoon H520"],
+          "frequency_bands": [
+            {
+              "band": "2.4 GHz",
+              "center_freq": 2412000000,
+              "min_freq": 2400000000,
+              "max_freq": 2483500000,
+              "bandwidth": 20000000,
+              "modulation": "OFDM"
+            }
+          ],
+          "power_characteristics": {
+            "max_power_dbm": 18,
+            "typical_power_dbm": 14,
+            "min_power_dbm": 4,
+            "duty_cycle": 0.38
+          },
+          "spectral_features": {
+            "peak_count": 2,
+            "peak_spacing_hz": 80000,
+            "roll_off_factor": 0.78
+          },
+          "confidence_threshold": 0.75,
+          "signature_hash": "yuneec_typhoon_h"
+        }
+      ]
+    },
+    
+    "generic": {
+      "manufacturer": "Generic/Unknown",
+      "description": "Generic drone signatures for unknown devices",
+      "signatures": [
+        {
+          "model": "WiFi Drone",
+          "variants": ["802.11b/g/n", "2.4 GHz WiFi"],
+          "frequency_bands": [
+            {
+              "band": "2.4 GHz",
+              "center_freq": 2440000000,
+              "min_freq": 2400000000,
+              "max_freq": 2483500000,
+              "bandwidth": 20000000,
+              "modulation": "OFDM",
+              "standard": "802.11"
+            }
+          ],
+          "power_characteristics": {
+            "max_power_dbm": 20,
+            "typical_power_dbm": 17,
+            "min_power_dbm": 10,
+            "duty_cycle": 0.7
+          },
+          "spectral_features": {
+            "peak_count": 1,
+            "peak_width_hz": 20000000,
+            "roll_off_factor": 0.9
+          },
+          "confidence_threshold": 0.6,
+          "signature_hash": "generic_wifi_drone"
+        },
+        {
+          "model": "BLE Drone",
+          "variants": ["Bluetooth LE", "BLE 4.0", "BLE 5.0"],
+          "frequency_bands": [
+            {
+              "band": "2.4 GHz",
+              "center_freq": 2402000000,
+              "min_freq": 2400000000,
+              "max_freq": 2483500000,
+              "bandwidth": 1000000,
+              "modulation": "GFSK"
+            }
+          ],
+          "hopping_pattern": {
+            "enabled": true,
+            "channels": 40,
+            "dwell_time_ms": 0.625
+          },
+          "power_characteristics": {
+            "max_power_dbm": 10,
+            "typical_power_dbm": 4,
+            "min_power_dbm": 0,
+            "duty_cycle": 0.5
+          },
+          "confidence_threshold": 0.5,
+          "signature_hash": "generic_ble_drone"
+        }
+      ]
+    }
+  },
+  
+  "frequency_bands": {
+    "description": "Common frequency bands used by drones",
+    "bands": [
+      {
+        "name": "2.4 GHz ISM",
+        "start_freq": 2400000000,
+        "end_freq": 2483500000,
+        "center_freq": 2441750000,
+        "bandwidth": 83500000,
+        "usage": ["DJI", "Autel", "WiFi", "BLE", "FPV Control"]
+      },
+      {
+        "name": "5.2 GHz",
+        "start_freq": 5150000000,
+        "end_freq": 5250000000,
+        "center_freq": 5200000000,
+        "bandwidth": 100000000,
+        "usage": ["DJI OcuSync", "WiFi"]
+      },
+      {
+        "name": "5.8 GHz ISM",
+        "start_freq": 5725000000,
+        "end_freq": 5875000000,
+        "center_freq": 5800000000,
+        "bandwidth": 150000000,
+        "usage": ["DJI", "Autel", "FPV Video", "FPV Control"]
+      },
+      {
+        "name": "900 MHz",
+        "start_freq": 902000000,
+        "end_freq": 928000000,
+        "center_freq": 915000000,
+        "bandwidth": 26000000,
+        "usage": ["Long Range FPV", "Crossfire", "ELRS"]
+      },
+      {
+        "name": "1.2 GHz",
+        "start_freq": 1240000000,
+        "end_freq": 1300000000,
+        "center_freq": 1270000000,
+        "bandwidth": 60000000,
+        "usage": ["Long Range Video", "Ham Radio"]
+      }
+    ]
+  },
+  
+  "modulation_types": {
+    "OFDM": {
+      "description": "Orthogonal Frequency Division Multiplexing",
+      "detection_features": ["cyclic_prefix", "flat_spectrum", "high_peak_to_average"],
+      "drone_types": ["DJI", "Autel", "Digital FPV"]
+    },
+    "FM": {
+      "description": "Frequency Modulation",
+      "detection_features": ["constant_envelope", "frequency_deviation", "sidebands"],
+      "drone_types": ["Analog FPV"]
+    },
+    "GFSK": {
+      "description": "Gaussian Frequency Shift Keying",
+      "detection_features": ["constant_envelope", "smooth_transitions"],
+      "drone_types": ["BLE Drones"]
+    },
+    "QPSK": {
+      "description": "Quadrature Phase Shift Keying",
+      "detection_features": ["constellation_points", "phase_shifts"],
+      "drone_types": ["Older DJI", "Control Links"]
+    }
+  },
+  
+  "detection_rules": {
+    "min_confidence": 0.5,
+    "max_confidence": 1.0,
+    "thresholds": {
+      "high_confidence": 0.85,
+      "medium_confidence": 0.7,
+      "low_confidence": 0.5
+    },
+    "classification": {
+      "unique_features_required": 3,
+      "temporal_consistency_window_ms": 5000,
+      "frequency_hop_detection": true
+    },
+    "alerts": {
+      "critical_threat": 0.95,
+      "high_threat": 0.85,
+      "medium_threat": 0.7,
+      "low_threat": 0.5
+    }
+  },
+  
+  "remote_id": {
+    "description": "Remote ID broadcast signatures",
+    "protocols": [
+      {
+        "name": "Bluetooth LE",
+        "frequency": 2402000000,
+        "service_uuid": "0xFFFA",
+        "manufacturer_id": "0x0005",
+        "message_types": ["Basic ID", "Location", "Auth", "Self ID", "System"]
+      },
+      {
+        "name": "WiFi Beacon",
+        "frequency": 2412000000,
+        "beacon_type": "Vendor Specific",
+        "oui": "00:11:22:33:44:55",
+        "information_elements": ["Drone ID", "Operator ID", "Position"]
+      }
+    ]
+  }
+}

@@ -1,0 +1,919 @@
+/* ============================================================================
+   Drone Detection System - Map Styling
+   Version: 2.0.0
+   ============================================================================ */
+
+/* ============================================================================
+   Map Container
+   ============================================================================ */
+
+.map-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: 400px;
+    border-radius: var(--radius-xl);
+    overflow: hidden;
+    background: #1a1a2e;
+}
+
+.map-fullscreen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: var(--z-modal);
+    border-radius: 0;
+}
+
+.map-wrapper {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+
+/* Map Controls */
+.map-controls {
+    position: absolute;
+    bottom: var(--spacing-lg);
+    right: var(--spacing-lg);
+    z-index: var(--z-elevate);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.map-control-btn {
+    width: 40px;
+    height: 40px;
+    background: var(--bg-card);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+}
+
+.map-control-btn:hover {
+    background: var(--accent-primary);
+    color: white;
+    border-color: var(--accent-primary);
+}
+
+/* Map Legend */
+.map-legend {
+    position: absolute;
+    bottom: var(--spacing-lg);
+    left: var(--spacing-lg);
+    z-index: var(--z-elevate);
+    background: var(--bg-card);
+    backdrop-filter: blur(10px);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-light);
+    padding: var(--spacing-md);
+    min-width: 150px;
+}
+
+.map-legend-title {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-semibold);
+    margin-bottom: var(--spacing-sm);
+    padding-bottom: var(--spacing-xs);
+    border-bottom: 1px solid var(--border-light);
+}
+
+.map-legend-item {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    font-size: var(--font-size-xs);
+    margin-bottom: var(--spacing-xs);
+    color: var(--text-secondary);
+}
+
+.map-legend-color {
+    width: 12px;
+    height: 12px;
+    border-radius: var(--radius-full);
+}
+
+/* ============================================================================
+   Drone Markers
+   ============================================================================ */
+
+/* Base Marker */
+.drone-marker {
+    cursor: pointer;
+    transition: transform var(--transition-fast);
+}
+
+.drone-marker:hover {
+    transform: scale(1.2);
+}
+
+/* Threat Level Markers */
+.marker-critical {
+    background: radial-gradient(circle, var(--threat-critical) 0%, rgba(123, 31, 162, 0.8) 100%);
+    border: 2px solid white;
+    border-radius: 50%;
+    width: 16px;
+    height: 16px;
+    box-shadow: 0 0 15px var(--threat-critical-glow);
+    animation: markerPulseCritical 1.5s infinite;
+}
+
+.marker-high {
+    background: radial-gradient(circle, var(--threat-high) 0%, rgba(244, 67, 54, 0.8) 100%);
+    border: 2px solid white;
+    border-radius: 50%;
+    width: 14px;
+    height: 14px;
+    box-shadow: 0 0 10px var(--threat-high-glow);
+    animation: markerPulseHigh 1.5s infinite;
+}
+
+.marker-medium {
+    background: radial-gradient(circle, var(--threat-medium) 0%, rgba(255, 152, 0, 0.8) 100%);
+    border: 2px solid white;
+    border-radius: 50%;
+    width: 12px;
+    height: 12px;
+    box-shadow: 0 0 8px var(--threat-medium-glow);
+    animation: markerPulseMedium 1.5s infinite;
+}
+
+.marker-low {
+    background: radial-gradient(circle, var(--threat-low) 0%, rgba(76, 175, 80, 0.8) 100%);
+    border: 1px solid white;
+    border-radius: 50%;
+    width: 10px;
+    height: 10px;
+    box-shadow: 0 0 4px var(--threat-low-glow);
+}
+
+.marker-unknown {
+    background: radial-gradient(circle, var(--threat-unknown) 0%, rgba(158, 158, 158, 0.8) 100%);
+    border: 1px solid white;
+    border-radius: 50%;
+    width: 10px;
+    height: 10px;
+}
+
+/* Selected Marker */
+.marker-selected {
+    width: 24px;
+    height: 24px;
+    border-width: 3px;
+    animation: markerPulseSelected 1s infinite;
+}
+
+.marker-selected::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 200%;
+    height: 200%;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(79, 172, 254, 0.4), transparent);
+    animation: markerRipple 1s infinite;
+}
+
+/* Custom Marker Icons */
+.marker-icon {
+    background: var(--bg-card);
+    border-radius: var(--radius-full);
+    padding: 4px;
+    border: 2px solid var(--accent-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.marker-icon i {
+    font-size: 14px;
+    color: var(--accent-primary);
+}
+
+.marker-icon-critical {
+    border-color: var(--threat-critical);
+}
+
+.marker-icon-critical i {
+    color: var(--threat-critical);
+}
+
+.marker-icon-high {
+    border-color: var(--threat-high);
+}
+
+.marker-icon-high i {
+    color: var(--threat-high);
+}
+
+/* ============================================================================
+   Marker Animations
+   ============================================================================ */
+
+@keyframes markerPulseCritical {
+    0%, 100% {
+        box-shadow: 0 0 5px var(--threat-critical-glow);
+        transform: scale(1);
+    }
+    50% {
+        box-shadow: 0 0 20px var(--threat-critical-glow);
+        transform: scale(1.1);
+    }
+}
+
+@keyframes markerPulseHigh {
+    0%, 100% {
+        box-shadow: 0 0 5px var(--threat-high-glow);
+        transform: scale(1);
+    }
+    50% {
+        box-shadow: 0 0 15px var(--threat-high-glow);
+        transform: scale(1.1);
+    }
+}
+
+@keyframes markerPulseMedium {
+    0%, 100% {
+        box-shadow: 0 0 3px var(--threat-medium-glow);
+        transform: scale(1);
+    }
+    50% {
+        box-shadow: 0 0 10px var(--threat-medium-glow);
+        transform: scale(1.05);
+    }
+}
+
+@keyframes markerPulseSelected {
+    0%, 100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.2);
+    }
+}
+
+@keyframes markerRipple {
+    0% {
+        width: 100%;
+        height: 100%;
+        opacity: 1;
+    }
+    100% {
+        width: 300%;
+        height: 300%;
+        opacity: 0;
+    }
+}
+
+/* ============================================================================
+   Drone Trail Lines
+   ============================================================================ */
+
+.drone-trail {
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    animation: trailDraw 0.5s ease-out;
+}
+
+@keyframes trailDraw {
+    from {
+        stroke-dashoffset: 1000;
+    }
+    to {
+        stroke-dashoffset: 0;
+    }
+}
+
+.trail-critical {
+    stroke: var(--threat-critical);
+    stroke-width: 3;
+    stroke-dasharray: 5, 5;
+    filter: drop-shadow(0 0 3px var(--threat-critical-glow));
+}
+
+.trail-high {
+    stroke: var(--threat-high);
+    stroke-width: 2.5;
+    stroke-dasharray: 4, 4;
+    filter: drop-shadow(0 0 2px var(--threat-high-glow));
+}
+
+.trail-medium {
+    stroke: var(--threat-medium);
+    stroke-width: 2;
+    stroke-dasharray: 3, 3;
+}
+
+.trail-low {
+    stroke: var(--threat-low);
+    stroke-width: 1.5;
+}
+
+/* ============================================================================
+   Geofence Zones
+   ============================================================================ */
+
+.geofence-zone {
+    fill-opacity: 0.15;
+    stroke-width: 2;
+    transition: all var(--transition-fast);
+    cursor: pointer;
+}
+
+.geofence-zone:hover {
+    fill-opacity: 0.25;
+    stroke-width: 3;
+}
+
+/* Zone Types */
+.zone-no-fly {
+    fill: var(--threat-critical);
+    stroke: var(--threat-critical);
+    animation: zonePulse 2s infinite;
+}
+
+.zone-restricted {
+    fill: var(--threat-high);
+    stroke: var(--threat-high);
+}
+
+.zone-warning {
+    fill: var(--threat-medium);
+    stroke: var(--threat-medium);
+}
+
+.zone-authorized {
+    fill: var(--threat-low);
+    stroke: var(--threat-low);
+}
+
+.zone-monitored {
+    fill: var(--info);
+    stroke: var(--info);
+}
+
+@keyframes zonePulse {
+    0%, 100% {
+        fill-opacity: 0.1;
+        stroke-width: 2;
+    }
+    50% {
+        fill-opacity: 0.2;
+        stroke-width: 3;
+    }
+}
+
+/* Zone Labels */
+.zone-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-shadow: 0 0 3px rgba(0, 0, 0, 0.5);
+    pointer-events: none;
+}
+
+.zone-label-critical {
+    color: var(--threat-critical-light);
+}
+
+.zone-label-high {
+    color: var(--threat-high-light);
+}
+
+.zone-label-medium {
+    color: var(--threat-medium-light);
+}
+
+.zone-label-low {
+    color: var(--threat-low-light);
+}
+
+/* ============================================================================
+   Heatmap Layer
+   ============================================================================ */
+
+.heatmap-layer {
+    mix-blend-mode: screen;
+}
+
+.heatmap-gradient {
+    background: linear-gradient(
+        to bottom,
+        rgba(0, 0, 0, 0),
+        rgba(79, 172, 254, 0.1),
+        rgba(79, 172, 254, 0.3),
+        rgba(255, 152, 0, 0.5),
+        rgba(244, 67, 54, 0.7),
+        rgba(123, 31, 162, 0.9)
+    );
+}
+
+/* Heatmap Legend */
+.heatmap-legend {
+    background: linear-gradient(
+        to right,
+        #4facfe,
+        #00f2fe,
+        #ffa726,
+        #f44336,
+        #7b1fa2
+    );
+    height: 8px;
+    border-radius: var(--radius-full);
+}
+
+/* ============================================================================
+   Cluster Groups
+   ============================================================================ */
+
+.marker-cluster {
+    background: rgba(79, 172, 254, 0.8);
+    border-radius: 50%;
+    color: white;
+    font-weight: bold;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 10px rgba(79, 172, 254, 0.5);
+    transition: all var(--transition-fast);
+}
+
+.marker-cluster:hover {
+    transform: scale(1.1);
+    background: var(--accent-primary);
+}
+
+.marker-cluster-small {
+    width: 30px;
+    height: 30px;
+    font-size: 12px;
+}
+
+.marker-cluster-medium {
+    width: 40px;
+    height: 40px;
+    font-size: 14px;
+}
+
+.marker-cluster-large {
+    width: 50px;
+    height: 50px;
+    font-size: 16px;
+}
+
+/* Cluster with threat indication */
+.marker-cluster-critical {
+    background: rgba(123, 31, 162, 0.8);
+}
+
+.marker-cluster-high {
+    background: rgba(244, 67, 54, 0.8);
+}
+
+.marker-cluster-medium {
+    background: rgba(255, 152, 0, 0.8);
+}
+
+/* ============================================================================
+   Popup Styles
+   ============================================================================ */
+
+.map-popup {
+    min-width: 220px;
+    max-width: 350px;
+}
+
+.popup-header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+    padding-bottom: var(--spacing-sm);
+    border-bottom: 1px solid var(--border-light);
+}
+
+.popup-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-md);
+    background: rgba(79, 172, 254, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.popup-icon i {
+    font-size: 16px;
+    color: var(--accent-primary);
+}
+
+.popup-title {
+    font-weight: var(--font-semibold);
+    font-size: var(--font-size-md);
+}
+
+.popup-subtitle {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+}
+
+.popup-details {
+    margin-bottom: var(--spacing-md);
+}
+
+.popup-detail-row {
+    display: flex;
+    justify-content: space-between;
+    padding: var(--spacing-xs) 0;
+    font-size: var(--font-size-sm);
+}
+
+.popup-detail-label {
+    color: var(--text-tertiary);
+}
+
+.popup-detail-value {
+    font-weight: var(--font-medium);
+    color: var(--text-primary);
+}
+
+.popup-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-top: var(--spacing-md);
+    padding-top: var(--spacing-sm);
+    border-top: 1px solid var(--border-light);
+}
+
+.popup-btn {
+    flex: 1;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    background: rgba(79, 172, 254, 0.1);
+    border: none;
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.popup-btn:hover {
+    background: rgba(79, 172, 254, 0.2);
+    color: var(--accent-primary);
+}
+
+/* Leaflet Popup Customization */
+.leaflet-popup-content-wrapper {
+    background: var(--bg-card);
+    backdrop-filter: blur(10px);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-light);
+    box-shadow: var(--shadow-lg);
+}
+
+.leaflet-popup-tip {
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+}
+
+.leaflet-popup-close-button {
+    color: var(--text-tertiary) !important;
+}
+
+.leaflet-popup-close-button:hover {
+    color: var(--error) !important;
+}
+
+/* ============================================================================
+   Drawing Controls
+   ============================================================================ */
+
+.leaflet-draw-toolbar {
+    margin-top: var(--spacing-sm);
+}
+
+.leaflet-draw-toolbar a {
+    background: var(--bg-card) !important;
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--border-light) !important;
+    border-radius: var(--radius-md) !important;
+    color: var(--text-secondary) !important;
+    transition: all var(--transition-fast);
+}
+
+.leaflet-draw-toolbar a:hover {
+    background: var(--accent-primary) !important;
+    border-color: var(--accent-primary) !important;
+}
+
+.leaflet-draw-draw-polygon {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5'/%3E%3C/svg%3E") !important;
+}
+
+/* Drawing Shapes */
+.leaflet-draw-draw-rectangle {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Crect x='4' y='4' width='16' height='16' rx='2'/%3E%3C/svg%3E") !important;
+}
+
+/* ============================================================================
+   Search Control
+   ============================================================================ */
+
+.leaflet-control-geocoder {
+    background: var(--bg-card) !important;
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--border-light) !important;
+    border-radius: var(--radius-md) !important;
+}
+
+.leaflet-control-geocoder-form input {
+    background: var(--bg-input) !important;
+    border: none !important;
+    color: var(--text-primary) !important;
+    padding: var(--spacing-sm) var(--spacing-md) !important;
+}
+
+.leaflet-control-geocoder-results {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-light) !important;
+}
+
+.leaflet-control-geocoder-results a {
+    color: var(--text-primary) !important;
+}
+
+.leaflet-control-geocoder-results a:hover {
+    background: rgba(79, 172, 254, 0.1) !important;
+}
+
+/* ============================================================================
+   Scale Control
+   ============================================================================ */
+
+.leaflet-control-scale {
+    background: var(--bg-card) !important;
+    backdrop-filter: blur(10px);
+    border-radius: var(--radius-md) !important;
+    padding: var(--spacing-xs) var(--spacing-sm) !important;
+    border: 1px solid var(--border-light) !important;
+}
+
+.leaflet-control-scale-line {
+    background: transparent !important;
+    border-color: var(--text-secondary) !important;
+    color: var(--text-secondary) !important;
+}
+
+/* ============================================================================
+   Attribution Control
+   ============================================================================ */
+
+.leaflet-control-attribution {
+    background: rgba(10, 10, 26, 0.8) !important;
+    backdrop-filter: blur(4px);
+    font-size: 10px !important;
+    padding: 2px 6px !important;
+    border-radius: var(--radius-md) !important;
+}
+
+.leaflet-control-attribution a {
+    color: var(--accent-primary) !important;
+}
+
+/* ============================================================================
+   Zoom Control
+   ============================================================================ */
+
+.leaflet-control-zoom a {
+    background: var(--bg-card) !important;
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--border-light) !important;
+    color: var(--text-secondary) !important;
+    border-radius: var(--radius-md) !important;
+    margin-bottom: var(--spacing-xs) !important;
+}
+
+.leaflet-control-zoom a:hover {
+    background: var(--accent-primary) !important;
+    color: white !important;
+}
+
+/* ============================================================================
+   Locate Control
+   ============================================================================ */
+
+.leaflet-control-locate a {
+    background: var(--bg-card) !important;
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--border-light) !important;
+    color: var(--text-secondary) !important;
+    border-radius: var(--radius-md) !important;
+}
+
+.leaflet-control-locate.active a {
+    background: var(--accent-primary) !important;
+    color: white !important;
+}
+
+/* ============================================================================
+   Fullscreen Control
+   ============================================================================ */
+
+.leaflet-control-fullscreen a {
+    background: var(--bg-card) !important;
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--border-light) !important;
+    color: var(--text-secondary) !important;
+    border-radius: var(--radius-md) !important;
+}
+
+.leaflet-control-fullscreen a:hover {
+    background: var(--accent-primary) !important;
+    color: white !important;
+}
+
+/* ============================================================================
+   Mini-map
+   ============================================================================ */
+
+.minimap-container {
+    position: absolute;
+    bottom: var(--spacing-lg);
+    right: var(--spacing-lg);
+    width: 200px;
+    height: 150px;
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-light);
+    overflow: hidden;
+    z-index: var(--z-elevate);
+    box-shadow: var(--shadow-lg);
+}
+
+.minimap-toggle {
+    position: absolute;
+    bottom: var(--spacing-lg);
+    right: var(--spacing-lg);
+    width: 32px;
+    height: 32px;
+    background: var(--bg-card);
+    border-radius: var(--radius-full);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: calc(var(--z-elevate) + 1);
+    border: 1px solid var(--border-light);
+    transition: all var(--transition-fast);
+}
+
+.minimap-toggle:hover {
+    background: var(--accent-primary);
+    color: white;
+}
+
+/* ============================================================================
+   Coordinates Display
+   ============================================================================ */
+
+.coords-display {
+    position: absolute;
+    bottom: var(--spacing-lg);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-card);
+    backdrop-filter: blur(10px);
+    padding: var(--spacing-xs) var(--spacing-md);
+    border-radius: var(--radius-full);
+    font-family: monospace;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-light);
+    z-index: var(--z-elevate);
+    pointer-events: none;
+}
+
+/* ============================================================================
+   Responsive Map Styles
+   ============================================================================ */
+
+@media (max-width: 768px) {
+    .map-container {
+        min-height: 300px;
+    }
+    
+    .map-legend {
+        bottom: 70px;
+        left: var(--spacing-md);
+        padding: var(--spacing-sm);
+        min-width: 120px;
+    }
+    
+    .map-legend-item {
+        font-size: 10px;
+    }
+    
+    .minimap-container {
+        width: 150px;
+        height: 100px;
+    }
+    
+    .coords-display {
+        font-size: 10px;
+        bottom: 10px;
+    }
+    
+    .popup-btn {
+        font-size: 10px;
+    }
+}
+
+@media (max-width: 480px) {
+    .map-legend {
+        display: none;
+    }
+    
+    .marker-critical,
+    .marker-high,
+    .marker-medium,
+    .marker-low {
+        width: 8px;
+        height: 8px;
+    }
+    
+    .marker-selected {
+        width: 16px;
+        height: 16px;
+    }
+}
+
+/* ============================================================================
+   Print Map Styles
+   ============================================================================ */
+
+@media print {
+    .map-controls,
+    .map-legend,
+    .minimap-container,
+    .coords-display,
+    .leaflet-control-attribution,
+    .leaflet-control-zoom,
+    .leaflet-control-locate,
+    .leaflet-control-fullscreen {
+        display: none !important;
+    }
+    
+    .map-container {
+        break-inside: avoid;
+        height: 500px;
+    }
+    
+    .drone-marker {
+        print-color-adjust: exact;
+    }
+}
+
+/* ============================================================================
+   Loading Overlay for Map
+   ============================================================================ */
+
+.map-loading {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(10, 10, 26, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: var(--z-overlay);
+    border-radius: var(--radius-xl);
+}
+
+.map-loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid rgba(79, 172, 254, 0.3);
+    border-top-color: var(--accent-primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}

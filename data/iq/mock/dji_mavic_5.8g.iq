@@ -1,0 +1,464 @@
+#!/usr/bin/env python3
+"""
+Generate mock IQ data for DJI Mavic drone at 5.8 GHz
+
+This script generates realistic synthetic IQ data that simulates
+DJI OcuSync transmission characteristics on the 5.8 GHz band
+for testing and development.
+"""
+
+import numpy as np
+import struct
+import json
+from pathlib import Path
+from datetime import datetime
+
+# ============================================================================
+# DJI Mavic 5.8 GHz Signal Parameters
+# ============================================================================
+
+class DJIMavic58GSignalGenerator:
+    """Generate realistic DJI Mavic OcuSync signal at 5.8 GHz"""
+    
+    def __init__(self):
+        # DJI OcuSync 5.8 GHz parameters
+        self.sample_rate = 20e6  # 20 MHz (higher bandwidth at 5.8 GHz)
+        self.center_freq = 5.825e9  # 5.825 GHz (common DJI channel)
+        self.bandwidth = 40e6  # 40 MHz (wider band at 5.8 GHz)
+        self.modulation = "OFDM"
+        self.subcarriers = 512  # More subcarriers for higher bandwidth
+        self.cyclic_prefix = 128
+        self.symbol_rate = 20e3  # symbols per second (faster)
+        
+        # Signal characteristics
+        self.snr_db = 18  # Better SNR at 5.8 GHz (less interference)
+        self.doppler_shift = 80  # Hz (simulating faster movement)
+        self.frequency_hop = True  # OcuSync uses frequency hopping
+        
+        # 5.8 GHz specific channel hopping pattern (DJI OcuSync)
+        self.hop_channels = [
+            5.735e9, 5.755e9, 5.775e9, 5.795e9, 5.815e9, 5.835e9, 5.855e9, 5.875e9
+        ]
+        self.hop_duration_ms = 8  # Faster hopping at 5.8 GHz
+        
+    def generate_ofdm_symbol(self, fft_size=512, cp_len=128):
+        """Generate a single OFDM symbol with 512 subcarriers"""
+        # Generate random QPSK symbols for subcarriers
+        data_symbols = (2 * np.random.randint(0, 2, fft_size) - 1) + \
+                       1j * (2 * np.random.randint(0, 2, fft_size) - 1)
+        data_symbols /= np.sqrt(2)  # Normalize power
+        
+        # Apply null subcarriers (guard bands)
+        guard_size = fft_size // 8  # 10% guard bands
+        data_symbols[:guard_size] = 0
+        data_symbols[-guard_size:] = 0
+        
+        # IFFT to get time-domain signal
+        ofdm_symbol = np.fft.ifft(data_symbols)
+        
+        # Add cyclic prefix
+        cp = ofdm_symbol[-cp_len:]
+        symbol_with_cp = np.concatenate([cp, ofdm_symbol])
+        
+        return symbol_with_cp
+    
+    def generate_signal(self, duration_seconds=10):
+        """Generate complete 5.8 GHz signal for given duration"""
+        num_samples = int(self.sample_rate * duration_seconds)
+        
+        # Calculate number of OFDM symbols needed
+        symbol_len = self.subcarriers + self.cyclic_prefix
+        num_symbols = int(np.ceil(num_samples / symbol_len))
+        
+        # Generate OFDM symbols
+        signal = np.zeros(num_symbols * symbol_len, dtype=np.complex128)
+        
+        for i in range(num_symbols):
+            symbol = self.generate_ofdm_symbol(self.subcarriers, self.cyclic_prefix)
+            start = i * symbol_len
+            signal[start:start + len(symbol)] = symbol
+        
+        # Trim to exact length
+        signal = signal[:num_samples]
+        
+        # Apply Doppler shift (simulate moving drone)
+        t = np.arange(num_samples) / self.sample_rate
+        doppler = np.exp(1j * 2 * np.pi * self.doppler_shift * t)
+        signal = signal * doppler
+        
+        # Apply frequency hopping (OcuSync 5.8 GHz)
+        if self.frequency_hop:
+            signal = self.apply_frequency_hopping(signal)
+        
+        # Apply path loss simulation (inverse square law)
+        distance = 100 * (1 + 0.5 * np.sin(2 * np.pi * 0.1 * t))  # Varying distance
+        path_loss = 1 / (distance ** 2)
+        signal = signal * path_loss
+        
+        # Normalize signal power
+        signal = signal / np.sqrt(np.mean(np.abs(signal)**2))
+        
+        # Add noise with frequency-dependent characteristics
+        noise = self.generate_frequency_dependent_noise(num_samples)
+        signal = signal + noise
+        
+        return signal.astype(np.complex64)
+    
+    def apply_frequency_hopping(self, signal):
+        """Simulate OcuSync frequency hopping pattern at 5.8 GHz"""
+        hop_samples = int(self.sample_rate * self.hop_duration_ms / 1000)
+        
+        output = np.zeros_like(signal)
+        num_hops = len(signal) // hop_samples
+        
+        for i in range(num_hops):
+            # Select channel
+            channel_idx = i % len(self.hop_channels)
+            channel_freq = self.hop_channels[channel_idx]
+            freq_offset = channel_freq - self.center_freq
+            
+            # Apply frequency shift
+            t = np.arange(hop_samples) / self.sample_rate
+            hop_phase = np.exp(1j * 2 * np.pi * freq_offset * t)
+            start = i * hop_samples
+            output[start:start + hop_samples] = signal[start:start + hop_samples] * hop_phase
+        
+        # Handle remaining samples
+        remaining = len(signal) - num_hops * hop_samples
+        if remaining > 0:
+            output[num_hops * hop_samples:] = signal[num_hops * hop_samples:]
+        
+        return output
+    
+    def generate_frequency_dependent_noise(self, num_samples):
+        """Generate noise with 5.8 GHz band characteristics"""
+        # 5.8 GHz band has different noise characteristics
+        # Less interference from WiFi, more from radar
+        
+        # Thermal noise
+        thermal_noise_power = 10 ** (-self.snr_db / 10)
+        thermal_noise = np.sqrt(thermal_noise_power/2) * (
+            np.random.randn(num_samples) + 1j * np.random.randn(num_samples)
+        )
+        
+        # Add radar pulse interference (simulate weather radar)
+        radar_pulse_rate = int(0.1 * self.sample_rate)  ~10 Hz
+        radar_pulses = np.zeros(num_samples, dtype=np.complex128)
+        for i in range(0, num_samples, radar_pulse_rate):
+            pulse_len = int(0.01 * self.sample_rate)  # 10 ms pulses
+            pulse = 0.5 * np.exp(1j * 2 * np.pi * 2e6 * np.arange(pulse_len) / self.sample_rate)
+            radar_pulses[i:i+pulse_len] = pulse
+        
+        # Combine noise sources
+        noise = thermal_noise + 0.2 * radar_pulses
+        
+        return noise
+
+
+# ============================================================================
+# Generate and Save IQ Data
+# ============================================================================
+
+def generate_dji_mavic_58g_file(duration_seconds=30, output_path=None, 
+                                 channel=5.825e9, bandwidth=40e6):
+    """
+    Generate DJI Mavic 5.8 GHz IQ data file
+    
+    Args:
+        duration_seconds: Duration of recording in seconds
+        output_path: Output file path (uses default if None)
+        channel: Center frequency in Hz
+        bandwidth: Signal bandwidth in Hz
+    """
+    print("=" * 60)
+    print("DJI Mavic 5.8 GHz IQ Data Generator")
+    print("=" * 60)
+    
+    # Create generator
+    generator = DJIMavic58GSignalGenerator()
+    generator.center_freq = channel
+    generator.bandwidth = bandwidth
+    
+    print(f"\nConfiguration:")
+    print(f"  Sample Rate: {generator.sample_rate/1e6:.1f} MHz")
+    print(f"  Center Frequency: {generator.center_freq/1e9:.3f} GHz")
+    print(f"  Bandwidth: {generator.bandwidth/1e6:.1f} MHz")
+    print(f"  Duration: {duration_seconds} seconds")
+    print(f"  SNR: {generator.snr_db} dB")
+    print(f"  Modulation: {generator.modulation}")
+    print(f"  Subcarriers: {generator.subcarriers}")
+    print(f"  Frequency Hopping: {generator.frequency_hop}")
+    
+    # Generate signal
+    print("\nGenerating 5.8 GHz signal...")
+    signal = generator.generate_signal(duration_seconds)
+    
+    print(f"  Samples generated: {len(signal):,}")
+    print(f"  Data type: {signal.dtype}")
+    print(f"  Memory usage: {len(signal) * 8 / (1024**2):.2f} MB")
+    
+    # Set output path
+    if output_path is None:
+        output_path = Path("data/iq/mock/dji_mavic_5.8g.iq")
+    
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Save to file
+    print(f"\nSaving to: {output_path}")
+    signal.tofile(output_path)
+    
+    file_size = output_path.stat().st_size
+    print(f"  File size: {file_size:,} bytes ({file_size / (1024**2):.2f} MB)")
+    
+    # Also save metadata
+    metadata = {
+        'drone_type': 'DJI Mavic 3',
+        'frequency_band': '5.8 GHz',
+        'center_frequency': generator.center_freq,
+        'sample_rate': generator.sample_rate,
+        'duration_seconds': duration_seconds,
+        'num_samples': len(signal),
+        'modulation': generator.modulation,
+        'bandwidth': generator.bandwidth,
+        'subcarriers': generator.subcarriers,
+        'cyclic_prefix': generator.cyclic_prefix,
+        'snr_db': generator.snr_db,
+        'doppler_shift_hz': generator.doppler_shift,
+        'frequency_hopping': generator.frequency_hop,
+        'hop_channels': generator.hop_channels,
+        'hop_duration_ms': generator.hop_duration_ms,
+        'generated_by': 'DJIMavic58GSignalGenerator',
+        'generation_date': datetime.now().isoformat(),
+        'notes': 'Simulates DJI OcuSync 5.8 GHz transmission with frequency hopping'
+    }
+    
+    metadata_path = output_path.with_suffix('.json')
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
+    print(f"  Metadata saved to: {metadata_path}")
+    
+    # Calculate and print signal statistics
+    print("\nSignal Statistics:")
+    print(f"  Mean: {np.mean(signal):.6f}")
+    print(f"  Std Dev: {np.std(signal):.6f}")
+    print(f"  Max Magnitude: {np.max(np.abs(signal)):.6f}")
+    print(f"  Min Magnitude: {np.min(np.abs(signal)):.6f}")
+    print(f"  Mean Power: {10*np.log10(np.mean(np.abs(signal)**2) + 1e-12):.2f} dB")
+    
+    # Frequency domain analysis
+    fft_data = np.fft.fftshift(np.fft.fft(signal))
+    fft_mag = np.abs(fft_data)
+    frequencies = np.fft.fftfreq(len(signal), 1/generator.sample_rate)
+    frequencies = np.fft.fftshift(frequencies)
+    
+    print(f"\nFrequency Domain Statistics:")
+    print(f"  Peak Frequency: {frequencies[np.argmax(fft_mag)]/1e6:.2f} MHz offset")
+    print(f"  Spectral Flatness: {np.exp(np.mean(np.log(fft_mag + 1e-12))) / np.mean(fft_mag):.3f}")
+    
+    return signal
+
+
+# ============================================================================
+# Batch Generation for Different Channels
+# ============================================================================
+
+def generate_all_dji_58g_variants(duration=10, output_dir="data/iq/mock"):
+    """
+    Generate multiple DJI 5.8 GHz signal variants for different channels
+    
+    Args:
+        duration: Duration in seconds for each variant
+        output_dir: Output directory
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Common DJI 5.8 GHz channels
+    channels = [
+        (5.735e9, "channel_1"),
+        (5.755e9, "channel_2"),
+        (5.775e9, "channel_3"),
+        (5.795e9, "channel_4"),
+        (5.815e9, "channel_5"),
+        (5.835e9, "channel_6"),
+        (5.855e9, "channel_7"),
+        (5.875e9, "channel_8")
+    ]
+    
+    for freq, name in channels:
+        output_path = output_dir / f"dji_mavic_5.8g_{name}.iq"
+        print(f"\n{'='*60}")
+        print(f"Generating {name} at {freq/1e9:.3f} GHz")
+        print(f"{'='*60}")
+        
+        generate_dji_mavic_58g_file(
+            duration_seconds=duration,
+            output_path=output_path,
+            channel=freq,
+            bandwidth=40e6
+        )
+    
+    print("\n" + "=" * 60)
+    print("All variants generated successfully!")
+    print("=" * 60)
+
+
+# ============================================================================
+# Comparison Between 2.4 GHz and 5.8 GHz
+# ============================================================================
+
+def generate_comparison_signals(duration=10):
+    """
+    Generate both 2.4 GHz and 5.8 GHz signals for comparison testing
+    
+    Args:
+        duration: Duration in seconds for each signal
+    """
+    print("\n" + "=" * 60)
+    print("Generating Comparison Signals (2.4 GHz vs 5.8 GHz)")
+    print("=" * 60)
+    
+    # Generate 2.4 GHz signal
+    from dji_mavic_2_4g import generate_dji_mavic_24g_file
+    
+    print("\n[1/2] Generating 2.4 GHz signal...")
+    generate_dji_mavic_24g_file(duration_seconds=duration)
+    
+    print("\n[2/2] Generating 5.8 GHz signal...")
+    generate_dji_mavic_58g_file(duration_seconds=duration)
+    
+    print("\n" + "=" * 60)
+    print("Comparison signals generated successfully!")
+    print("=" * 60)
+
+
+# ============================================================================
+# Utility Functions
+# ============================================================================
+
+def verify_iq_file(file_path):
+    """Verify integrity of generated IQ file"""
+    import hashlib
+    
+    file_path = Path(file_path)
+    
+    if not file_path.exists():
+        print(f"File not found: {file_path}")
+        return False
+    
+    # Check file size
+    file_size = file_path.stat().st_size
+    samples = file_size // 8  # 8 bytes per complex64
+    
+    print(f"\nVerifying: {file_path.name}")
+    print(f"  File size: {file_size:,} bytes")
+    print(f"  Samples: {samples:,}")
+    
+    # Load and verify data
+    data = np.fromfile(file_path, dtype=np.complex64)
+    
+    print(f"  Data shape: {data.shape}")
+    print(f"  Mean: {np.mean(data):.6f}")
+    print(f"  Std: {np.std(data):.6f}")
+    print(f"  Min/Max: {np.min(data):.6f} / {np.max(data):.6f}")
+    
+    # Check for NaN or Inf
+    if np.any(np.isnan(data)):
+        print("  [ERROR] NaN values detected!")
+        return False
+    
+    if np.any(np.isinf(data)):
+        print("  [ERROR] Infinite values detected!")
+        return False
+    
+    print("  [OK] File verification passed")
+    
+    return True
+
+
+def plot_spectrum(file_path, sample_rate=20e6):
+    """Plot spectrum of generated IQ file"""
+    import matplotlib.pyplot as plt
+    
+    data = np.fromfile(file_path, dtype=np.complex64)
+    
+    # Compute FFT
+    fft_data = np.fft.fftshift(np.fft.fft(data))
+    fft_mag = 20 * np.log10(np.abs(fft_data) + 1e-12)
+    freqs = np.fft.fftfreq(len(data), 1/sample_rate)
+    freqs = np.fft.fftshift(freqs)
+    
+    # Plot
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(freqs / 1e6, fft_mag)
+    ax.set_xlabel('Frequency (MHz)')
+    ax.set_ylabel('Magnitude (dB)')
+    ax.set_title(f'Spectrum of {file_path.name}')
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim([-30, 30])  # Show ±30 MHz around center
+    
+    plt.tight_layout()
+    plt.show()
+
+
+# ============================================================================
+# Main Function
+# ============================================================================
+
+def main():
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Generate DJI Mavic 5.8 GHz mock IQ data for testing"
+    )
+    parser.add_argument("--duration", type=int, default=10, 
+                        help="Duration in seconds (default: 10)")
+    parser.add_argument("--output-dir", type=str, default="data/iq/mock", 
+                        help="Output directory (default: data/iq/mock)")
+    parser.add_argument("--channel", type=float, default=5.825e9,
+                        help="Center frequency in Hz (default: 5.825e9)")
+    parser.add_argument("--bandwidth", type=float, default=40e6,
+                        help="Bandwidth in Hz (default: 40e6)")
+    parser.add_argument("--all-channels", action="store_true",
+                        help="Generate all 8 DJI 5.8 GHz channels")
+    parser.add_argument("--comparison", action="store_true",
+                        help="Generate both 2.4 GHz and 5.8 GHz signals")
+    parser.add_argument("--verify", action="store_true",
+                        help="Verify generated files")
+    parser.add_argument("--plot", action="store_true",
+                        help="Plot spectrum after generation")
+    
+    args = parser.parse_args()
+    
+    if args.all_channels:
+        generate_all_dji_58g_variants(duration=args.duration, output_dir=args.output_dir)
+    
+    elif args.comparison:
+        generate_comparison_signals(duration=args.duration)
+    
+    else:
+        # Generate single file
+        generate_dji_mavic_58g_file(
+            duration_seconds=args.duration,
+            output_path=Path(args.output_dir) / "dji_mavic_5.8g.iq",
+            channel=args.channel,
+            bandwidth=args.bandwidth
+        )
+    
+    # Verify files
+    if args.verify:
+        output_dir = Path(args.output_dir)
+        for iq_file in output_dir.glob("dji_mavic_5.8g*.iq"):
+            verify_iq_file(iq_file)
+    
+    # Plot spectrum
+    if args.plot:
+        output_path = Path(args.output_dir) / "dji_mavic_5.8g.iq"
+        if output_path.exists():
+            plot_spectrum(output_path, sample_rate=20e6)
+
+
+if __name__ == "__main__":
+    main()

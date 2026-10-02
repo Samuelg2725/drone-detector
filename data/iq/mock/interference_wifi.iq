@@ -1,0 +1,832 @@
+#!/usr/bin/env python3
+"""
+Generate mock WiFi interference IQ data
+
+This script generates realistic synthetic WiFi interference signals
+representing various 802.11 standards (b/g/n/ac/ax) for testing
+the drone detection system's interference handling capabilities.
+"""
+
+import numpy as np
+import json
+from pathlib import Path
+from datetime import datetime
+from scipy import signal
+import hashlib
+
+# ============================================================================
+# WiFi Interference Generator
+# ============================================================================
+
+class WiFiInterferenceGenerator:
+    """Generate realistic WiFi interference IQ data"""
+    
+    def __init__(self):
+        self.sample_rate = 20e6  # 20 MHz (sufficient for 20/40 MHz channels)
+        self.center_freq = 2.442e9  # 2.442 GHz (typical WiFi channel 7)
+        
+        # WiFi standard parameters
+        self.standard = "802.11n"  # 802.11b/g/n/ac/ax
+        self.channel_width = 20e6  # 20 MHz, 40 MHz, 80 MHz
+        self.guard_interval = 0.8e-6  # 0.8 µs (long GI)
+        
+        # Signal characteristics
+        self.snr_db = 20  # Signal-to-noise ratio
+        self.num_packets = 100  # Number of packets to generate
+        self.packet_duration_ms = 2  # Average packet duration (2 ms)
+        
+        # 802.11 parameters
+        self.fft_size = 64  # for 20 MHz channels
+        self.data_subcarriers = 52
+        self.pilot_subcarriers = 4
+        self.cyclic_prefix = 16  # 0.8 µs at 20 MHz
+        
+        # MCS (Modulation and Coding Scheme) settings
+        self.mcs_index = 7  # 0-7 for 802.11n (7 = 64-QAM, 5/6 rate)
+        
+        # MCS mapping
+        self.mcs_modulations = {
+            0: ("BPSK", 1/2),
+            1: ("QPSK", 1/2),
+            2: ("QPSK", 3/4),
+            3: ("16-QAM", 1/2),
+            4: ("16-QAM", 3/4),
+            5: ("64-QAM", 2/3),
+            6: ("64-QAM", 3/4),
+            7: ("64-QAM", 5/6)
+        }
+        
+        # Channel frequency (2.4 GHz or 5 GHz)
+        self.band = "2.4"  # 2.4 or 5
+        self.channel = 7  # Channel number
+        
+        # Get channel frequencies
+        self.channel_frequencies = self._get_channel_frequencies()
+        
+    def _get_channel_frequencies(self):
+        """Get WiFi channel frequencies"""
+        if self.band == "2.4":
+            # 2.4 GHz channels (1-14)
+            channels = {
+                1: 2.412e9, 2: 2.417e9, 3: 2.422e9, 4: 2.427e9,
+                5: 2.432e9, 6: 2.437e9, 7: 2.442e9, 8: 2.447e9,
+                9: 2.452e9, 10: 2.457e9, 11: 2.462e9, 12: 2.467e9,
+                13: 2.472e9, 14: 2.484e9
+            }
+        else:
+            # 5 GHz channels (36-165)
+            channels = {
+                36: 5.180e9, 40: 5.200e9, 44: 5.220e9, 48: 5.240e9,
+                52: 5.260e9, 56: 5.280e9, 60: 5.300e9, 64: 5.320e9,
+                100: 5.500e9, 104: 5.520e9, 108: 5.540e9, 112: 5.560e9,
+                116: 5.580e9, 120: 5.600e9, 124: 5.620e9, 128: 5.640e9,
+                132: 5.660e9, 136: 5.680e9, 140: 5.700e9, 149: 5.745e9,
+                153: 5.765e9, 157: 5.785e9, 161: 5.805e9, 165: 5.825e9
+            }
+        
+        return channels
+    
+    def generate_scrambled_data(self, length):
+        """Generate scrambled payload data (802.11 scrambler simulation)"""
+        # 802.11 uses a 7-bit linear feedback shift register
+        # Initialize scrambler seed
+        seed = 0x7F
+        lfsr = seed
+        
+        scrambled = []
+        for i in range(length):
+            # Generate scrambler output
+            feedback = ((lfsr >> 6) ^ (lfsr >> 5)) & 1
+            scrambled_bit = ((lfsr >> 0) & 1) ^ feedback
+            scrambled.append(scrambled_bit)
+            lfsr = ((lfsr << 1) | feedback) & 0x7F
+        
+        return np.array(scrambled)
+    
+    def generate_ofdm_symbol(self, data_bits, pilots=None):
+        """Generate OFDM symbol with data and pilot subcarriers"""
+        if pilots is None:
+            # BPSK pilot values (±1)
+            pilots = [1, 1, -1, 1]  # Standard 802.11 pilot pattern
+        
+        # Create subcarrier mapping
+        subcarriers = np.zeros(self.fft_size, dtype=np.complex128)
+        
+        # Map data to data subcarriers (positions -26 to -1 and 1 to 26, skipping 0)
+        data_positions = list(range(-26, 0)) + list(range(1, 27))
+        data_positions.remove(-21)  # Pilot positions
+        data_positions.remove(-7)
+        data_positions.remove(7)
+        data_positions.remove(21)
+        
+        # Modulate data bits
+        modulation, rate = self.mcs_modulations[self.mcs_index]
+        symbols = self.modulate_bits(data_bits[:len(data_positions)], modulation)
+        
+        for i, pos in enumerate(data_positions[:len(symbols)]):
+            subcarriers[self.fft_size//2 + pos] = symbols[i]
+        
+        # Add pilot subcarriers
+        pilot_positions = [-21, -7, 7, 21]
+        for i, pos in enumerate(pilot_positions):
+            subcarriers[self.fft_size//2 + pos] = pilots[i % len(pilots)]
+        
+        # IFFT to get time-domain signal
+        ofdm_symbol = np.fft.ifft(subcarriers)
+        
+        # Add cyclic prefix
+        cp = ofdm_symbol[-self.cyclic_prefix:]
+        symbol_with_cp = np.concatenate([cp, ofdm_symbol])
+        
+        return symbol_with_cp
+    
+    def modulate_bits(self, bits, modulation):
+        """Modulate bits according to modulation scheme"""
+        if modulation == "BPSK":
+            symbols = 2 * bits - 1
+            return symbols.astype(np.complex128)
+        
+        elif modulation == "QPSK":
+            # Group bits into pairs
+            pairs = bits.reshape(-1, 2)
+            symbols = np.zeros(len(pairs), dtype=np.complex128)
+            for i, pair in enumerate(pairs):
+                if pair[0] == 0 and pair[1] == 0:
+                    symbols[i] = (1 + 1j) / np.sqrt(2)
+                elif pair[0] == 0 and pair[1] == 1:
+                    symbols[i] = (1 - 1j) / np.sqrt(2)
+                elif pair[0] == 1 and pair[1] == 0:
+                    symbols[i] = (-1 + 1j) / np.sqrt(2)
+                else:
+                    symbols[i] = (-1 - 1j) / np.sqrt(2)
+            return symbols
+        
+        elif modulation == "16-QAM":
+            # Gray-coded 16-QAM
+            quads = bits.reshape(-1, 4)
+            symbols = np.zeros(len(quads), dtype=np.complex128)
+            for i, quad in enumerate(quads):
+                # Map to 16-QAM constellation
+                i_val = (2 * quad[0] - 1) * (2 * quad[1] + 1)
+                q_val = (2 * quad[2] - 1) * (2 * quad[3] + 1)
+                symbols[i] = (i_val + 1j * q_val) / np.sqrt(10)
+            return symbols
+        
+        elif modulation == "64-QAM":
+            # Gray-coded 64-QAM
+            hexes = bits.reshape(-1, 6)
+            symbols = np.zeros(len(hexes), dtype=np.complex128)
+            for i, hex_ in enumerate(hexes):
+                # Map to 64-QAM constellation
+                i_val = (2 * hex_[0] - 1) * ((4 * hex_[1] + 2 * hex_[2] + hex_[3]) - 3)
+                q_val = (2 * hex_[4] - 1) * ((4 * hex_[5] + hex_[0] + hex_[1]) - 3)
+                symbols[i] = (i_val + 1j * q_val) / np.sqrt(42)
+            return symbols
+        
+        return bits.astype(np.complex128)
+    
+    def generate_preamble(self):
+        """Generate 802.11 preamble (short and long training symbols)"""
+        # Short training symbols (for AGC and timing)
+        short_symbols = [
+            0, 0, 0, 0, 0, 0, 1+1j, 0, 0, 0, -1-1j, 0, 0, 0,
+            1+1j, 0, 0, 0, -1-1j, 0, 0, 0, -1-1j, 0, 0, 0,
+            1+1j, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        ]
+        
+        # Zero pad to FFT size
+        short_padded = np.zeros(self.fft_size, dtype=np.complex128)
+        short_padded[8:8 + len(short_symbols)] = short_symbols
+        
+        short_time = np.fft.ifft(short_padded)
+        short_time = short_time[:16]  # 10 repetitions of 0.8 µs each
+        
+        # Repeat short training symbols (10 times)
+        short_preamble = np.tile(short_time, 10)
+        
+        # Long training symbols (for channel estimation)
+        long_symbols = [
+            1, 1, -1, -1, 1, 1, -1, 1, -1, 1, 1, 1, 1, 1, 1, -1,
+            -1, 1, 1, -1, 1, -1, 1, 1, 1, 1, 0, 1, -1, -1, 1, 1,
+            -1, 1, -1, 1, -1, -1, -1, -1, -1, 1, 1, -1, -1, 1, -1, 1,
+            -1, 1, 1, 1, 1
+        ]
+        
+        # Zero pad
+        long_padded = np.zeros(self.fft_size, dtype=np.complex128)
+        long_padded[6:6 + len(long_symbols)] = long_symbols
+        
+        long_time = np.fft.ifft(long_padded)
+        
+        # Long training sequence (2 symbols + 2x GI)
+        long_preamble = np.concatenate([
+            long_time[-self.cyclic_prefix:],  # GI
+            long_time,  # First long symbol
+            long_time   # Second long symbol
+        ])
+        
+        # Combine short and long preambles
+        preamble = np.concatenate([short_preamble, long_preamble])
+        
+        return preamble
+    
+    def generate_packet(self):
+        """Generate a single 802.11 packet"""
+        # Calculate packet size
+        modulation, rate = self.mcs_modulations[self.mcs_index]
+        bits_per_symbol = int(modulation.split('-')[0])  # BPSK=1, QPSK=2, 16-QAM=4, 64-QAM=6
+        coded_bits_per_symbol = bits_per_symbol
+        
+        # Payload size (random between 64 and 1500 bytes)
+        payload_bytes = np.random.randint(64, 1500)
+        
+        # Add MAC header (36 bytes)
+        total_bytes = payload_bytes + 36 + 4  # +4 for FCS
+        
+        # Calculate number of OFDM symbols needed
+        bits_per_ofdm = self.data_subcarriers * bits_per_symbol
+        num_symbols = int(np.ceil(total_bytes * 8 / bits_per_ofdm))
+        
+        # Generate payload data
+        payload_bits = self.generate_scrambled_data(total_bytes * 8)
+        
+        # Add service field (16 bits)
+        service_bits = np.zeros(16, dtype=int)
+        service_bits[0] = 1  # Scrambler initialization
+        
+        all_bits = np.concatenate([service_bits, payload_bits])
+        
+        # Pad to fit OFDM symbols
+        total_bits_needed = num_symbols * bits_per_ofdm
+        if len(all_bits) < total_bits_needed:
+            # Add pad bits
+            pad_bits = np.zeros(total_bits_needed - len(all_bits), dtype=int)
+            all_bits = np.concatenate([all_bits, pad_bits])
+        
+        # Generate OFDM symbols
+        packet = []
+        
+        # Add preamble
+        packet.append(self.generate_preamble())
+        
+        # Add SIGNAL field (1 symbol)
+        signal_bits = self.generate_signal_field()
+        signal_symbol = self.generate_ofdm_symbol(signal_bits)
+        packet.append(signal_symbol)
+        
+        # Add data symbols
+        for i in range(num_symbols):
+            start = i * bits_per_ofdm
+            end = start + bits_per_ofdm
+            symbol_bits = all_bits[start:end]
+            data_symbol = self.generate_ofdm_symbol(symbol_bits)
+            packet.append(data_symbol)
+        
+        return np.concatenate(packet)
+    
+    def generate_signal_field(self):
+        """Generate SIGNAL field (1 OFDM symbol)"""
+        # SIGNAL field bits (24 bits)
+        signal_bits = np.zeros(24, dtype=int)
+        
+        # Rate (4 bits) - MCS index
+        rate_bits = format(self.mcs_index, '04b')
+        for i, bit in enumerate(rate_bits):
+            signal_bits[i] = int(bit)
+        
+        # Reserved (1 bit)
+        signal_bits[4] = 0
+        
+        # Length (12 bits) - packet length in bytes
+        length_bits = format(np.random.randint(64, 1500), '012b')
+        for i, bit in enumerate(length_bits):
+            signal_bits[5 + i] = int(bit)
+        
+        # Parity (1 bit)
+        signal_bits[17] = np.sum(signal_bits[:17]) % 2
+        
+        # Tail bits (6 bits)
+        signal_bits[18:24] = 0
+        
+        return signal_bits
+    
+    def generate_beacon(self, duration_seconds=0.1):
+        """Generate beacon frame (for AP discovery)"""
+        num_samples = int(self.sample_rate * duration_seconds)
+        t = np.arange(num_samples) / self.sample_rate
+        
+        # Beacon interval is typically 100 ms
+        beacon_interval = 0.1  # 100 ms
+        num_beacons = int(duration_seconds / beacon_interval)
+        
+        beacon_signal = np.zeros(num_samples, dtype=np.complex128)
+        
+        for i in range(num_beacons):
+            start_sample = int(i * beacon_interval * self.sample_rate)
+            if start_sample + 1000 < num_samples:
+                # Generate beacon packet
+                beacon_packet = self.generate_packet()
+                end_sample = min(start_sample + len(beacon_packet), num_samples)
+                beacon_signal[start_sample:end_sample] = beacon_packet[:end_sample - start_sample]
+        
+        return beacon_signal
+    
+    def generate_continuous_traffic(self, duration_seconds=10):
+        """Generate continuous WiFi traffic"""
+        num_packets = self.num_packets
+        packet_duration = self.packet_duration_ms / 1000
+        
+        # Generate packets with random intervals
+        packets = []
+        current_time = 0
+        
+        while current_time < duration_seconds:
+            packet = self.generate_packet()
+            packets.append(packet)
+            
+            # Random inter-packet gap (0-5 ms)
+            gap = np.random.exponential(0.005)  # 5 ms average
+            current_time += packet_duration + gap
+        
+        # Concatenate all packets
+        signal = np.concatenate(packets)
+        
+        # Trim to exact duration
+        num_samples = int(self.sample_rate * duration_seconds)
+        signal = signal[:num_samples]
+        
+        return signal
+    
+    def generate_signal(self, duration_seconds=10, traffic_type="continuous"):
+        """Generate complete WiFi interference signal"""
+        print(f"\nGenerating {self.standard} WiFi interference...")
+        
+        if traffic_type == "continuous":
+            signal = self.generate_continuous_traffic(duration_seconds)
+        elif traffic_type == "beacon":
+            signal = self.generate_beacon(duration_seconds)
+        else:
+            # Single packet burst
+            signal = self.generate_packet()
+        
+        # Add fading effects (multipath)
+        signal = self.apply_fading(signal)
+        
+        # Add frequency offset (simulate Doppler)
+        t = np.arange(len(signal)) / self.sample_rate
+        freq_offset = 50  # 50 Hz offset
+        signal = signal * np.exp(1j * 2 * np.pi * freq_offset * t)
+        
+        # Normalize
+        signal = signal / np.sqrt(np.mean(np.abs(signal)**2) + 1e-12)
+        
+        # Add noise
+        noise_power = 10 ** (-self.snr_db / 10)
+        noise = np.sqrt(noise_power/2) * (np.random.randn(len(signal)) + 1j * np.random.randn(len(signal)))
+        signal = signal + noise
+        
+        return signal.astype(np.complex64)
+    
+    def apply_fading(self, signal):
+        """Apply multipath fading (Rayleigh or Rician)"""
+        # Simple 3-tap fading model
+        taps = [
+            (0, 0.8),           # Direct path
+            (0.5e-6, 0.5),      # 0.5 µs delay, 0.5 amplitude
+            (1.0e-6, 0.3)       # 1.0 µs delay, 0.3 amplitude
+        ]
+        
+        faded = np.zeros(len(signal), dtype=np.complex128)
+        
+        for delay, amplitude in taps:
+            delay_samples = int(delay * self.sample_rate)
+            if delay_samples < len(signal):
+                faded[delay_samples:] += amplitude * signal[:-delay_samples]
+        
+        return faded
+
+
+# ============================================================================
+# Standard-Specific Generators
+# ============================================================================
+
+class WiFi80211bGenerator(WiFiInterferenceGenerator):
+    """802.11b (DSSS/CCK) interference"""
+    
+    def __init__(self):
+        super().__init__()
+        self.standard = "802.11b"
+        self.channel_width = 22e6
+        self.sample_rate = 22e6
+        self.modulation = "CCK"
+        self.mcs_index = 0  # 1-11 Mbps
+
+
+class WiFi80211gGenerator(WiFiInterferenceGenerator):
+    """802.11g (OFDM) interference (2.4 GHz)"""
+    
+    def __init__(self):
+        super().__init__()
+        self.standard = "802.11g"
+        self.channel_width = 20e6
+        self.band = "2.4"
+
+
+class WiFi80211nGenerator(WiFiInterferenceGenerator):
+    """802.11n (MIMO) interference"""
+    
+    def __init__(self):
+        super().__init__()
+        self.standard = "802.11n"
+        self.channel_width = 40e6  # Can be 20 or 40 MHz
+        self.sample_rate = 40e6
+        self.fft_size = 128
+        self.data_subcarriers = 108
+        self.pilot_subcarriers = 6
+        self.cyclic_prefix = 32
+
+
+class WiFi80211acGenerator(WiFiInterferenceGenerator):
+    """802.11ac (5 GHz) interference"""
+    
+    def __init__(self):
+        super().__init__()
+        self.standard = "802.11ac"
+        self.channel_width = 80e6
+        self.sample_rate = 80e6
+        self.band = "5"
+        self.fft_size = 256
+        self.data_subcarriers = 234
+        self.pilot_subcarriers = 8
+        self.cyclic_prefix = 64
+
+
+# ============================================================================
+# Generate and Save IQ Data
+# ============================================================================
+
+def generate_wifi_interference_file(duration_seconds=30, standard="802.11n", 
+                                    traffic_type="continuous", output_path=None):
+    """
+    Generate WiFi interference IQ data file
+    
+    Args:
+        duration_seconds: Duration of recording in seconds
+        standard: WiFi standard (802.11b/g/n/ac)
+        traffic_type: Traffic type (continuous, beacon, burst)
+        output_path: Output file path (uses default if None)
+    """
+    print("=" * 60)
+    print(f"WiFi Interference IQ Data Generator - {standard}")
+    print("=" * 60)
+    
+    # Select generator based on standard
+    if standard == "802.11b":
+        generator = WiFi80211bGenerator()
+    elif standard == "802.11g":
+        generator = WiFi80211gGenerator()
+    elif standard == "802.11n":
+        generator = WiFi80211nGenerator()
+    elif standard == "802.11ac":
+        generator = WiFi80211acGenerator()
+    else:
+        generator = WiFiInterferenceGenerator()
+        generator.standard = standard
+    
+    generator.num_packets = int(duration_seconds * 50)  # ~50 packets per second
+    
+    # Get channel frequency
+    channel_freq = generator.channel_frequencies.get(generator.channel, 2.442e9)
+    generator.center_freq = channel_freq
+    
+    print(f"\nConfiguration:")
+    print(f"  Standard: {generator.standard}")
+    print(f"  Band: {generator.band} GHz")
+    print(f"  Channel: {generator.channel}")
+    print(f"  Frequency: {generator.center_freq/1e9:.3f} GHz")
+    print(f"  Channel Width: {generator.channel_width/1e6:.0f} MHz")
+    print(f"  Sample Rate: {generator.sample_rate/1e6:.1f} MHz")
+    print(f"  Traffic Type: {traffic_type}")
+    print(f"  Duration: {duration_seconds} seconds")
+    print(f"  SNR: {generator.snr_db} dB")
+    print(f"  MCS Index: {generator.mcs_index}")
+    
+    modulation, rate = generator.mcs_modulations[generator.mcs_index]
+    print(f"  Modulation: {modulation}, Coding Rate: {rate}")
+    
+    # Generate signal
+    print("\nGenerating WiFi interference signal...")
+    signal = generator.generate_signal(duration_seconds, traffic_type)
+    
+    print(f"  Samples generated: {len(signal):,}")
+    print(f"  Data type: {signal.dtype}")
+    print(f"  Memory usage: {len(signal) * 8 / (1024**2):.2f} MB")
+    
+    # Set output path
+    if output_path is None:
+        output_path = Path("data/iq/mock/interference_wifi.iq")
+    
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Save to file
+    print(f"\nSaving to: {output_path}")
+    signal.tofile(output_path)
+    
+    file_size = output_path.stat().st_size
+    print(f"  File size: {file_size:,} bytes ({file_size / (1024**2):.2f} MB)")
+    
+    # Calculate hash
+    sha256 = hashlib.sha256()
+    with open(output_path, 'rb') as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            sha256.update(chunk)
+    
+    # Calculate statistics
+    power_dbm = 10 * np.log10(np.mean(np.abs(signal)**2) + 1e-12)
+    peak_power_dbm = 10 * np.log10(np.max(np.abs(signal)**2) + 1e-12)
+    
+    print("\nSignal Statistics:")
+    print(f"  Mean: {np.mean(signal):.6f}")
+    print(f"  Std Dev: {np.std(signal):.6f}")
+    print(f"  Mean Power: {power_dbm:.1f} dBm")
+    print(f"  Peak Power: {peak_power_dbm:.1f} dBm")
+    print(f"  PAPR: {peak_power_dbm - power_dbm:.1f} dB")
+    print(f"  SHA256: {sha256.hexdigest()[:16]}...")
+    
+    # Save metadata
+    metadata = {
+        'signal_type': 'WiFi Interference',
+        'standard': generator.standard,
+        'band': generator.band,
+        'channel': generator.channel,
+        'center_frequency': generator.center_freq,
+        'channel_width_hz': generator.channel_width,
+        'sample_rate': generator.sample_rate,
+        'duration_seconds': duration_seconds,
+        'num_samples': len(signal),
+        'traffic_type': traffic_type,
+        'snr_db': generator.snr_db,
+        'mcs_index': generator.mcs_index,
+        'modulation': modulation,
+        'coding_rate': rate,
+        'fft_size': generator.fft_size,
+        'data_subcarriers': generator.data_subcarriers,
+        'cyclic_prefix_samples': generator.cyclic_prefix,
+        'statistics': {
+            'mean': float(np.mean(signal)),
+            'std': float(np.std(signal)),
+            'mean_power_dbm': float(power_dbm),
+            'peak_power_dbm': float(peak_power_dbm),
+            'papr_db': float(peak_power_dbm - power_dbm),
+            'variance': float(np.var(signal))
+        },
+        'file_hash': sha256.hexdigest(),
+        'generated_by': 'WiFiInterferenceGenerator',
+        'generation_date': datetime.now().isoformat(),
+        'notes': f'Simulates {standard} WiFi interference on channel {generator.channel}'
+    }
+    
+    metadata_path = output_path.with_suffix('.json')
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
+    print(f"  Metadata saved to: {metadata_path}")
+    
+    return signal
+
+
+# ============================================================================
+# Generate Multiple WiFi Variants
+# ============================================================================
+
+def generate_all_wifi_variants(duration=10, output_dir="data/iq/mock"):
+    """
+    Generate WiFi interference signals for all standards and channels
+    
+    Args:
+        duration: Duration in seconds for each variant
+        output_dir: Output directory
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    standards = ["802.11b", "802.11g", "802.11n", "802.11ac"]
+    traffic_types = ["continuous", "beacon", "burst"]
+    
+    print("\n" + "=" * 60)
+    print("Generating All WiFi Interference Variants")
+    print("=" * 60)
+    
+    for standard in standards:
+        for traffic in traffic_types:
+            output_path = output_dir / f"interference_wifi_{standard}_{traffic}.iq"
+            print(f"\n{'='*60}")
+            generate_wifi_interference_file(
+                duration_seconds=duration,
+                standard=standard,
+                traffic_type=traffic,
+                output_path=output_path
+            )
+    
+    print("\n" + "=" * 60)
+    print("All WiFi interference variants generated successfully!")
+    print("=" * 60)
+
+
+def generate_multi_channel_wifi(duration=5, output_dir="data/iq/mock"):
+    """
+    Generate WiFi signals on different channels
+    
+    Args:
+        duration: Duration in seconds for each channel
+        output_dir: Output directory
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 2.4 GHz channels
+    channels_24g = [1, 6, 11]  # Non-overlapping channels
+    
+    for ch in channels_24g:
+        generator = WiFi80211nGenerator()
+        generator.channel = ch
+        generator.center_freq = generator.channel_frequencies[ch]
+        
+        output_path = output_dir / f"interference_wifi_2.4g_ch{ch}.iq"
+        
+        print(f"\nGenerating WiFi on 2.4 GHz channel {ch} ({generator.center_freq/1e9:.3f} GHz)")
+        
+        signal = generator.generate_signal(duration)
+        signal.tofile(output_path)
+        
+        print(f"  Saved: {output_path}")
+    
+    # 5 GHz channels
+    channels_5g = [36, 44, 149, 157]
+    
+    for ch in channels_5g:
+        generator = WiFi80211acGenerator()
+        generator.channel = ch
+        generator.center_freq = generator.channel_frequencies[ch]
+        
+        output_path = output_dir / f"interference_wifi_5g_ch{ch}.iq"
+        
+        print(f"\nGenerating WiFi on 5 GHz channel {ch} ({generator.center_freq/1e9:.3f} GHz)")
+        
+        signal = generator.generate_signal(duration)
+        signal.tofile(output_path)
+        
+        print(f"  Saved: {output_path}")
+    
+    print("\n" + "=" * 60)
+    print("Multi-channel WiFi variants generated!")
+    print("=" * 60)
+
+
+# ============================================================================
+# Utility Functions
+# ============================================================================
+
+def verify_iq_file(file_path):
+    """Verify integrity of generated IQ file"""
+    file_path = Path(file_path)
+    
+    if not file_path.exists():
+        print(f"File not found: {file_path}")
+        return False
+    
+    # Check file size
+    file_size = file_path.stat().st_size
+    samples = file_size // 8  # 8 bytes per complex64
+    
+    print(f"\nVerifying: {file_path.name}")
+    print(f"  File size: {file_size:,} bytes")
+    print(f"  Samples: {samples:,}")
+    
+    # Load and verify data
+    data = np.fromfile(file_path, dtype=np.complex64)
+    
+    print(f"  Data shape: {data.shape}")
+    print(f"  Mean: {np.mean(data):.6f}")
+    print(f"  Std: {np.std(data):.6f}")
+    print(f"  Min/Max: {np.min(data):.6f} / {np.max(data):.6f}")
+    
+    # Check for NaN or Inf
+    if np.any(np.isnan(data)):
+        print("  [ERROR] NaN values detected!")
+        return False
+    
+    if np.any(np.isinf(data)):
+        print("  [ERROR] Infinite values detected!")
+        return False
+    
+    # Packet detection
+    energy = np.abs(data)**2
+    threshold = np.percentile(energy, 90)
+    packets = np.sum(energy > threshold) / len(energy)
+    print(f"  Packet Density: {packets:.1%}")
+    
+    print("  [OK] File verification passed")
+    
+    return True
+
+
+def plot_spectrum(file_path, sample_rate=20e6):
+    """Plot spectrum of generated IQ file"""
+    import matplotlib.pyplot as plt
+    
+    data = np.fromfile(file_path, dtype=np.complex64)
+    
+    # Compute PSD
+    f, psd = signal.welch(data, fs=sample_rate, nperseg=4096, return_onesided=False)
+    psd_db = 10 * np.log10(psd + 1e-12)
+    f = np.fft.fftshift(f)
+    psd_db = np.fft.fftshift(psd_db)
+    
+    fig, axes = plt.subplots(2, 1, figsize=(12, 10))
+    
+    # Spectrum
+    axes[0].plot(f / 1e6, psd_db, 'b-', alpha=0.7, linewidth=0.5)
+    axes[0].set_xlabel('Frequency (MHz)')
+    axes[0].set_ylabel('PSD (dBm/Hz)')
+    axes[0].set_title(f'WiFi Interference Spectrum - {Path(file_path).stem}')
+    axes[0].grid(True, alpha=0.3)
+    axes[0].set_xlim([-40, 40])
+    
+    # Spectrogram
+    f_spec, t_spec, Sxx = signal.spectrogram(data, fs=sample_rate, nperseg=1024, noverlap=512)
+    Sxx_db = 10 * np.log10(Sxx + 1e-12)
+    
+    im = axes[1].pcolormesh(t_spec, f_spec/1e6, Sxx_db, shading='gouraud', cmap='viridis')
+    axes[1].set_xlabel('Time (s)')
+    axes[1].set_ylabel('Frequency (MHz)')
+    axes[1].set_title('Spectrogram')
+    plt.colorbar(im, ax=axes[1], label='Power (dB)')
+    
+    plt.tight_layout()
+    plt.show()
+
+
+# ============================================================================
+# Main Function
+# ============================================================================
+
+def main():
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Generate WiFi interference IQ data for testing"
+    )
+    parser.add_argument("--duration", type=int, default=30, 
+                        help="Duration in seconds (default: 30)")
+    parser.add_argument("--output-dir", type=str, default="data/iq/mock", 
+                        help="Output directory (default: data/iq/mock)")
+    parser.add_argument("--standard", type=str, default="802.11n",
+                        choices=["802.11b", "802.11g", "802.11n", "802.11ac"],
+                        help="WiFi standard (default: 802.11n)")
+    parser.add_argument("--traffic", type=str, default="continuous",
+                        choices=["continuous", "beacon", "burst"],
+                        help="Traffic type (default: continuous)")
+    parser.add_argument("--all-variants", action="store_true",
+                        help="Generate all standard variants")
+    parser.add_argument("--multi-channel", action="store_true",
+                        help="Generate multi-channel variants")
+    parser.add_argument("--verify", action="store_true",
+                        help="Verify generated files")
+    parser.add_argument("--plot", action="store_true",
+                        help="Plot spectrum after generation")
+    
+    args = parser.parse_args()
+    
+    if args.all_variants:
+        generate_all_wifi_variants(duration=args.duration, output_dir=args.output_dir)
+    
+    elif args.multi_channel:
+        generate_multi_channel_wifi(duration=args.duration, output_dir=args.output_dir)
+    
+    else:
+        # Generate single file
+        generate_wifi_interference_file(
+            duration_seconds=args.duration,
+            standard=args.standard,
+            traffic_type=args.traffic,
+            output_path=Path(args.output_dir) / "interference_wifi.iq"
+        )
+    
+    # Verify files
+    if args.verify:
+        output_dir = Path(args.output_dir)
+        for iq_file in output_dir.glob("interference_wifi*.iq"):
+            verify_iq_file(iq_file)
+    
+    # Plot spectrum
+    if args.plot:
+        output_path = Path(args.output_dir) / "interference_wifi.iq"
+        if output_path.exists():
+            sample_rate = 40e6 if "n" in str(output_path) or "ac" in str(output_path) else 20e6
+            plot_spectrum(output_path, sample_rate=sample_rate)
+
+
+if __name__ == "__main__":
+    main()

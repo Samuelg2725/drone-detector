@@ -1,0 +1,65 @@
+{
+  "model_name": "Drone Detection Classifier",
+  "version": "2.0.0",
+  "algorithm": "RandomForest",
+  "training_date": "2024-01-15T10:30:00",
+  "num_features": 46,
+  "feature_names": [
+    "peak_freq", "peak_magnitude", "peak_width", "peak_prominence",
+    "power_spectral_density_mean", "power_spectral_density_std",
+    "power_spectral_density_skew", "power_spectral_density_kurtosis",
+    "bandwidth_3db", "bandwidth_6db", "bandwidth_20db", "roll_off_factor",
+    "spectral_flatness", "spectral_centroid", "spectral_spread",
+    "spectral_rolloff", "noise_floor", "signal_to_noise_ratio",
+    "peak_to_average_power_ratio", "total_harmonic_distortion",
+    "cyclic_frequency_1", "cyclic_frequency_2", "cyclic_frequency_3",
+    "cyclic_amplitude_1", "cyclic_amplitude_2", "cyclic_amplitude_3",
+    "cyclic_coherence", "cycle_frequency_spacing",
+    "iq_mean_real", "iq_mean_imag", "iq_std_real", "iq_std_imag",
+    "iq_variance", "iq_skewness", "iq_kurtosis",
+    "amplitude_variance", "phase_variance", "instantaneous_frequency_std",
+    "modulation_index", "frequency_deviation", "symbol_rate",
+    "carrier_offset", "evm_rms", "evm_peak", "phase_error_rms", "magnitude_error_rms"
+  ],
+  "num_classes": 14,
+  "class_names": {
+    "0": "noise",
+    "1": "dji_mavic",
+    "2": "dji_mini",
+    "3": "dji_phantom",
+    "4": "fpv_analog",
+    "5": "fpv_digital",
+    "6": "autel_evo",
+    "7": "skydio",
+    "8": "parrot_anafi",
+    "9": "hubsan",
+    "10": "yuneec",
+    "11": "interference_wifi",
+    "12": "interference_ble",
+    "13": "interference_radar"
+  },
+  "hyperparameters": {
+    "n_estimators": 100,
+    "max_depth": 20,
+    "min_samples_split": 5,
+    "min_samples_leaf": 2,
+    "max_features": "sqrt",
+    "random_state": 42
+  },
+  "performance": {
+    "accuracy": 0.94,
+    "cv_scores": [0.93, 0.94, 0.95, 0.93, 0.94],
+    "feature_importance": {
+      "peak_magnitude": 0.12,
+      "signal_to_noise_ratio": 0.11,
+      "peak_freq": 0.10,
+      "bandwidth_6db": 0.08,
+      "spectral_flatness": 0.07,
+      "power_spectral_density_std": 0.06,
+      "cyclic_coherence": 0.05,
+      "evm_rms": 0.04,
+      "modulation_index": 0.04,
+      "iq_variance": 0.03
+    }
+  }
+}

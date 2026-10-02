@@ -1,0 +1,610 @@
+#!/usr/bin/env python3
+"""
+Generate mock noise floor IQ data
+
+This script generates realistic synthetic noise floor IQ data
+representing various RF environments for testing and calibration
+of the drone detection system.
+"""
+
+import numpy as np
+import json
+from pathlib import Path
+from datetime import datetime
+from scipy import signal
+
+# ============================================================================
+# Noise Floor Signal Generator
+# ============================================================================
+
+class NoiseFloorGenerator:
+    """Generate realistic noise floor IQ data for different environments"""
+    
+    def __init__(self):
+        self.sample_rate = 10e6  # 10 MHz
+        self.center_freq = 2.44e9  # 2.44 GHz
+        self.bandwidth = 20e6  # 20 MHz
+        
+        # Noise characteristics
+        self.noise_floor_dbm = -100  # dBm
+        self.temperature_k = 290  # Kelvin (room temperature)
+        
+        # Environment type
+        self.environment = "urban"  # urban, suburban, rural, industrial, office
+        
+        # Interference settings
+        self.include_interference = True
+        self.include_impulse_noise = False
+        self.include_thermal_noise = True
+        self.include_atmospheric_noise = False
+        
+    def generate_thermal_noise(self, num_samples):
+        """Generate thermal (Johnson-Nyquist) noise"""
+        # k = Boltzmann constant (1.38e-23 J/K)
+        # P_noise = k * T * B
+        k = 1.38e-23
+        noise_power = k * self.temperature_k * self.bandwidth
+        
+        # Convert to linear scale
+        noise_amplitude = np.sqrt(noise_power)
+        
+        # Generate complex Gaussian noise
+        noise = noise_amplitude * (np.random.randn(num_samples) + 1j * np.random.randn(num_samples))
+        
+        return noise
+    
+    def generate_atmospheric_noise(self, num_samples):
+        """Generate atmospheric/lightning noise (non-Gaussian)"""
+        # Atmospheric noise has impulsive characteristics
+        # Using alpha-stable distribution approximation
+        alpha = 1.5  # Stability parameter (1 < alpha <= 2)
+        beta = 0  # Skewness parameter
+        
+        # Generate symmetric alpha-stable noise
+        noise = self.generate_alpha_stable_noise(num_samples, alpha, beta)
+        
+        # Scale to realistic level
+        noise = noise * 0.1
+        
+        return noise
+    
+    def generate_alpha_stable_noise(self, num_samples, alpha, beta):
+        """Generate alpha-stable distributed noise"""
+        # Chambers-Mallows-Stuck method
+        phi = np.pi * (np.random.rand(num_samples) - 0.5)
+        w = -np.log(np.random.rand(num_samples))
+        
+        a = np.sin(alpha * phi) / (np.cos(phi) ** (1/alpha))
+        b = (np.cos(phi - alpha * phi) / w) ** ((1 - alpha) / alpha)
+        
+        noise = a * b
+        
+        return noise
+    
+    def generate_impulse_noise(self, num_samples, impulse_rate=0.01):
+        """Generate impulse noise (bursts)"""
+        impulse_noise = np.zeros(num_samples, dtype=np.complex128)
+        
+        # Generate random impulses
+        num_impulses = int(num_samples * impulse_rate)
+        impulse_indices = np.random.choice(num_samples, num_impulses, replace=False)
+        
+        # Random amplitudes and durations
+        for idx in impulse_indices:
+            amplitude = np.random.exponential(5)  # Exponential distribution
+            duration = np.random.randint(1, 10)  # 1-10 samples
+            end_idx = min(idx + duration, num_samples)
+            impulse_noise[idx:end_idx] += amplitude * np.exp(1j * 2 * np.pi * np.random.rand())
+        
+        return impulse_noise
+    
+    def generate_interference(self, num_samples):
+        """Generate common RF interference signals"""
+        t = np.arange(num_samples) / self.sample_rate
+        
+        interference = np.zeros(num_samples, dtype=np.complex128)
+        
+        # WiFi interference (OFDM-like)
+        wifi_tones = [2.412e9, 2.437e9, 2.462e9]  # Common WiFi channels
+        for freq in wifi_tones:
+            offset = (freq - self.center_freq) / self.sample_rate
+            interference += 0.1 * np.exp(1j * 2 * np.pi * offset * t)
+        
+        # Bluetooth interference (frequency hopping)
+        bt_frequencies = [2.402e9 + i * 1e6 for i in range(79)]  # 79 channels
+        hop_duration = int(0.001 * self.sample_rate)  # 1 ms hops
+        
+        for i in range(0, num_samples, hop_duration):
+            hop_freq = np.random.choice(bt_frequencies)
+            offset = (hop_freq - self.center_freq) / self.sample_rate
+            hop_end = min(i + hop_duration, num_samples)
+            interference[i:hop_end] += 0.05 * np.exp(1j * 2 * np.pi * offset * t[i:hop_end])
+        
+        # Microwave oven interference (50/60 Hz harmonics)
+        microwave_freq = 60  # Hz
+        for harmonic in range(1, 6):
+            interference += 0.02 * np.exp(1j * 2 * np.pi * harmonic * microwave_freq * t)
+        
+        return interference
+    
+    def generate_signal(self, duration_seconds=30):
+        """Generate noise floor signal for given duration"""
+        num_samples = int(self.sample_rate * duration_seconds)
+        signal = np.zeros(num_samples, dtype=np.complex128)
+        
+        print(f"\nGenerating {self.environment} noise floor...")
+        
+        # Add thermal noise
+        if self.include_thermal_noise:
+            thermal_noise = self.generate_thermal_noise(num_samples)
+            signal += thermal_noise
+            print(f"  Thermal noise added (kTB = {10*np.log10(np.mean(np.abs(thermal_noise)**2) + 1e-12):.1f} dBm)")
+        
+        # Add atmospheric noise
+        if self.include_atmospheric_noise:
+            atmos_noise = self.generate_atmospheric_noise(num_samples)
+            signal += atmos_noise
+            print(f"  Atmospheric noise added")
+        
+        # Add interference
+        if self.include_interference:
+            interference = self.generate_interference(num_samples)
+            signal += interference
+            print(f"  RF interference added")
+        
+        # Add impulse noise
+        if self.include_impulse_noise:
+            impulse_noise = self.generate_impulse_noise(num_samples)
+            signal += impulse_noise
+            print(f"  Impulse noise added")
+        
+        # Normalize to target noise floor
+        target_power = 10 ** (self.noise_floor_dbm / 10)
+        current_power = np.mean(np.abs(signal)**2)
+        if current_power > 0:
+            signal = signal * np.sqrt(target_power / current_power)
+        
+        return signal.astype(np.complex64)
+
+
+# ============================================================================
+# Environment-Specific Generators
+# ============================================================================
+
+class UrbanNoiseGenerator(NoiseFloorGenerator):
+    """Urban environment noise (high interference)"""
+    
+    def __init__(self):
+        super().__init__()
+        self.environment = "urban"
+        self.noise_floor_dbm = -85
+        self.include_interference = True
+        self.include_impulse_noise = True
+        self.include_atmospheric_noise = False
+
+
+class SuburbanNoiseGenerator(NoiseFloorGenerator):
+    """Suburban environment noise (moderate interference)"""
+    
+    def __init__(self):
+        super().__init__()
+        self.environment = "suburban"
+        self.noise_floor_dbm = -95
+        self.include_interference = True
+        self.include_impulse_noise = False
+        self.include_atmospheric_noise = False
+
+
+class RuralNoiseGenerator(NoiseFloorGenerator):
+    """Rural environment noise (low interference)"""
+    
+    def __init__(self):
+        super().__init__()
+        self.environment = "rural"
+        self.noise_floor_dbm = -105
+        self.include_interference = False
+        self.include_impulse_noise = False
+        self.include_atmospheric_noise = True
+
+
+class IndustrialNoiseGenerator(NoiseFloorGenerator):
+    """Industrial environment noise (high impulse noise)"""
+    
+    def __init__(self):
+        super().__init__()
+        self.environment = "industrial"
+        self.noise_floor_dbm = -80
+        self.include_interference = True
+        self.include_impulse_noise = True
+        self.include_atmospheric_noise = False
+
+
+class OfficeNoiseGenerator(NoiseFloorGenerator):
+    """Office environment noise (WiFi/BT heavy)"""
+    
+    def __init__(self):
+        super().__init__()
+        self.environment = "office"
+        self.noise_floor_dbm = -90
+        self.include_interference = True
+        self.include_impulse_noise = False
+        self.include_atmospheric_noise = False
+
+
+# ============================================================================
+# Generate and Save IQ Data
+# ============================================================================
+
+def generate_noise_floor_file(duration_seconds=30, environment="urban", output_path=None):
+    """
+    Generate noise floor IQ data file for specified environment
+    
+    Args:
+        duration_seconds: Duration of recording in seconds
+        environment: Environment type (urban, suburban, rural, industrial, office)
+        output_path: Output file path (uses default if None)
+    """
+    print("=" * 60)
+    print(f"Noise Floor IQ Data Generator - {environment.upper()} Environment")
+    print("=" * 60)
+    
+    # Select generator based on environment
+    if environment == "urban":
+        generator = UrbanNoiseGenerator()
+    elif environment == "suburban":
+        generator = SuburbanNoiseGenerator()
+    elif environment == "rural":
+        generator = RuralNoiseGenerator()
+    elif environment == "industrial":
+        generator = IndustrialNoiseGenerator()
+    elif environment == "office":
+        generator = OfficeNoiseGenerator()
+    else:
+        generator = NoiseFloorGenerator()
+        generator.environment = environment
+    
+    print(f"\nConfiguration:")
+    print(f"  Sample Rate: {generator.sample_rate/1e6:.1f} MHz")
+    print(f"  Center Frequency: {generator.center_freq/1e9:.3f} GHz")
+    print(f"  Bandwidth: {generator.bandwidth/1e6:.1f} MHz")
+    print(f"  Duration: {duration_seconds} seconds")
+    print(f"  Noise Floor: {generator.noise_floor_dbm} dBm")
+    print(f"  Temperature: {generator.temperature_k} K")
+    
+    # Generate signal
+    signal = generator.generate_signal(duration_seconds)
+    
+    print(f"\n  Samples generated: {len(signal):,}")
+    print(f"  Data type: {signal.dtype}")
+    print(f"  Memory usage: {len(signal) * 8 / (1024**2):.2f} MB")
+    
+    # Set output path
+    if output_path is None:
+        output_path = Path("data/iq/mock/noise_floor.iq")
+    
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Save to file
+    print(f"\nSaving to: {output_path}")
+    signal.tofile(output_path)
+    
+    file_size = output_path.stat().st_size
+    print(f"  File size: {file_size:,} bytes ({file_size / (1024**2):.2f} MB)")
+    
+    # Calculate statistics
+    power_dbm = 10 * np.log10(np.mean(np.abs(signal)**2) + 1e-12)
+    peak_power_dbm = 10 * np.log10(np.max(np.abs(signal)**2) + 1e-12)
+    
+    print("\nSignal Statistics:")
+    print(f"  Mean: {np.mean(signal):.6f}")
+    print(f"  Std Dev: {np.std(signal):.6f}")
+    print(f"  Mean Power: {power_dbm:.1f} dBm")
+    print(f"  Peak Power: {peak_power_dbm:.1f} dBm")
+    print(f"  Peak-to-Average Ratio: {peak_power_dbm - power_dbm:.1f} dB")
+    
+    # Save metadata
+    metadata = {
+        'signal_type': 'Noise Floor',
+        'environment': generator.environment,
+        'center_frequency': generator.center_freq,
+        'sample_rate': generator.sample_rate,
+        'bandwidth': generator.bandwidth,
+        'duration_seconds': duration_seconds,
+        'num_samples': len(signal),
+        'noise_floor_dbm': generator.noise_floor_dbm,
+        'temperature_k': generator.temperature_k,
+        'thermal_noise_enabled': generator.include_thermal_noise,
+        'interference_enabled': generator.include_interference,
+        'impulse_noise_enabled': generator.include_impulse_noise,
+        'atmospheric_noise_enabled': generator.include_atmospheric_noise,
+        'statistics': {
+            'mean': float(np.mean(signal)),
+            'std': float(np.std(signal)),
+            'mean_power_dbm': float(power_dbm),
+            'peak_power_dbm': float(peak_power_dbm),
+            'variance': float(np.var(signal)),
+            'skewness': float(np.real(np.mean((signal - np.mean(signal))**3) / (np.std(signal)**3 + 1e-12))),
+            'kurtosis': float(np.real(np.mean((signal - np.mean(signal))**4) / (np.std(signal)**4 + 1e-12)))
+        },
+        'generated_by': 'NoiseFloorGenerator',
+        'generation_date': datetime.now().isoformat(),
+        'notes': f'Simulates {environment} RF environment noise floor for calibration'
+    }
+    
+    metadata_path = output_path.with_suffix('.json')
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
+    print(f"  Metadata saved to: {metadata_path}")
+    
+    return signal
+
+
+# ============================================================================
+# Generate All Environment Variants
+# ============================================================================
+
+def generate_all_environments(duration=30, output_dir="data/iq/mock"):
+    """
+    Generate noise floor signals for all environments
+    
+    Args:
+        duration: Duration in seconds for each variant
+        output_dir: Output directory
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    environments = ["urban", "suburban", "rural", "industrial", "office"]
+    
+    print("\n" + "=" * 60)
+    print("Generating All Noise Floor Environments")
+    print("=" * 60)
+    
+    for env in environments:
+        output_path = output_dir / f"noise_floor_{env}.iq"
+        print(f"\n{'='*60}")
+        generate_noise_floor_file(
+            duration_seconds=duration,
+            environment=env,
+            output_path=output_path
+        )
+    
+    print("\n" + "=" * 60)
+    print("All noise floor variants generated successfully!")
+    print("=" * 60)
+
+
+# ============================================================================
+# Calibration Signal Generator
+# ============================================================================
+
+def generate_calibration_signal(duration=10, output_dir="data/iq/mock"):
+    """
+    Generate calibration signal (known tones) for system calibration
+    
+    Args:
+        duration: Duration in seconds
+        output_dir: Output directory
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    sample_rate = 10e6
+    num_samples = int(sample_rate * duration)
+    t = np.arange(num_samples) / sample_rate
+    
+    # Generate calibration tones
+    signal = np.zeros(num_samples, dtype=np.complex128)
+    
+    # Known frequency tones for calibration
+    tones = [-2e6, -1e6, -500e3, -100e3, 0, 100e3, 500e3, 1e6, 2e6]
+    
+    for tone_freq in tones:
+        signal += 0.1 * np.exp(1j * 2 * np.pi * tone_freq * t)
+    
+    # Add noise floor
+    noise_power = 10 ** (-90 / 10)  # -90 dBm noise floor
+    noise = np.sqrt(noise_power/2) * (np.random.randn(num_samples) + 1j * np.random.randn(num_samples))
+    signal += noise
+    
+    signal = signal.astype(np.complex64)
+    
+    output_path = output_dir / "calibration_signal.iq"
+    signal.tofile(output_path)
+    
+    print(f"\nCalibration signal saved to: {output_path}")
+    print(f"  Tones: {', '.join([f'{f/1e3:.0f}kHz' for f in tones])}")
+    
+    return signal
+
+
+# ============================================================================
+# Utility Functions
+# ============================================================================
+
+def verify_iq_file(file_path):
+    """Verify integrity of generated IQ file"""
+    file_path = Path(file_path)
+    
+    if not file_path.exists():
+        print(f"File not found: {file_path}")
+        return False
+    
+    # Check file size
+    file_size = file_path.stat().st_size
+    samples = file_size // 8  # 8 bytes per complex64
+    
+    print(f"\nVerifying: {file_path.name}")
+    print(f"  File size: {file_size:,} bytes")
+    print(f"  Samples: {samples:,}")
+    
+    # Load and verify data
+    data = np.fromfile(file_path, dtype=np.complex64)
+    
+    print(f"  Data shape: {data.shape}")
+    print(f"  Mean: {np.mean(data):.6f}")
+    print(f"  Std: {np.std(data):.6f}")
+    print(f"  Min/Max: {np.min(data):.6f} / {np.max(data):.6f}")
+    
+    # Check for NaN or Inf
+    if np.any(np.isnan(data)):
+        print("  [ERROR] NaN values detected!")
+        return False
+    
+    if np.any(np.isinf(data)):
+        print("  [ERROR] Infinite values detected!")
+        return False
+    
+    # Check noise characteristics
+    power_dbm = 10 * np.log10(np.mean(np.abs(data)**2) + 1e-12)
+    print(f"  Mean Power: {power_dbm:.1f} dBm")
+    
+    print("  [OK] File verification passed")
+    
+    return True
+
+
+def plot_spectrum(file_path, sample_rate=10e6):
+    """Plot spectrum of generated IQ file"""
+    import matplotlib.pyplot as plt
+    
+    data = np.fromfile(file_path, dtype=np.complex64)
+    
+    # Compute PSD using Welch's method
+    f, psd = signal.welch(data, fs=sample_rate, nperseg=4096, return_onesided=False)
+    psd_db = 10 * np.log10(psd + 1e-12)
+    f = np.fft.fftshift(f)
+    psd_db = np.fft.fftshift(psd_db)
+    
+    # Plot
+    fig, ax = plt.subplots(figsize=(12, 8))
+    ax.plot(f / 1e6, psd_db, 'b-', alpha=0.7, linewidth=0.5)
+    ax.set_xlabel('Frequency (MHz)')
+    ax.set_ylabel('Power Spectral Density (dBm/Hz)')
+    ax.set_title(f'Noise Floor Spectrum - {Path(file_path).stem}')
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim([-10, 10])  # Show ±10 MHz around center
+    
+    # Add noise floor annotation
+    noise_floor = np.percentile(psd_db, 10)
+    ax.axhline(y=noise_floor, color='r', linestyle='--', alpha=0.5, 
+               label=f'Noise Floor: {noise_floor:.1f} dBm/Hz')
+    ax.legend()
+    
+    plt.tight_layout()
+    plt.show()
+
+
+def analyze_noise_characteristics(file_path, sample_rate=10e6):
+    """Analyze noise characteristics of IQ file"""
+    data = np.fromfile(file_path, dtype=np.complex64)
+    
+    print(f"\nNoise Analysis for {Path(file_path).name}")
+    print("=" * 40)
+    
+    # Basic statistics
+    print(f"\nBasic Statistics:")
+    print(f"  Mean: {np.mean(data):.6f}")
+    print(f"  Std Dev: {np.std(data):.6f}")
+    print(f"  Variance: {np.var(data):.6f}")
+    
+    # Power statistics
+    power = np.abs(data)**2
+    power_dbm = 10 * np.log10(power + 1e-12)
+    print(f"\nPower Statistics:")
+    print(f"  Mean Power: {np.mean(power_dbm):.1f} dBm")
+    print(f"  Peak Power: {np.max(power_dbm):.1f} dBm")
+    print(f"  PAPR: {np.max(power_dbm) - np.mean(power_dbm):.1f} dB")
+    
+    # Distribution analysis
+    from scipy import stats
+    print(f"\nDistribution Analysis:")
+    print(f"  Skewness: {stats.skew(np.real(data)):.3f}")
+    print(f"  Kurtosis: {stats.kurtosis(np.real(data)):.3f}")
+    
+    # Test for Gaussianity (Shapiro-Wilk test on subset)
+    sample = np.real(data[:1000])
+    shapiro_stat, shapiro_p = stats.shapiro(sample)
+    print(f"\nGaussianity Test (Shapiro-Wilk):")
+    print(f"  Statistic: {shapiro_stat:.4f}")
+    print(f"  P-value: {shapiro_p:.4f}")
+    print(f"  Gaussian: {'Yes' if shapiro_p > 0.05 else 'No'}")
+    
+    # Frequency analysis
+    f, psd = signal.welch(data, fs=sample_rate, nperseg=4096)
+    psd_db = 10 * np.log10(psd + 1e-12)
+    noise_floor = np.percentile(psd_db, 10)
+    print(f"\nSpectral Analysis:")
+    print(f"  Noise Floor: {noise_floor:.1f} dBm/Hz")
+    print(f"  Spectral Flatness: {np.exp(np.mean(np.log(psd + 1e-12))) / np.mean(psd):.3f}")
+
+
+# ============================================================================
+# Main Function
+# ============================================================================
+
+def main():
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Generate noise floor IQ data for testing and calibration"
+    )
+    parser.add_argument("--duration", type=int, default=30, 
+                        help="Duration in seconds (default: 30)")
+    parser.add_argument("--output-dir", type=str, default="data/iq/mock", 
+                        help="Output directory (default: data/iq/mock)")
+    parser.add_argument("--environment", type=str, default="urban",
+                        choices=["urban", "suburban", "rural", "industrial", "office"],
+                        help="Environment type (default: urban)")
+    parser.add_argument("--all-environments", action="store_true",
+                        help="Generate all environment variants")
+    parser.add_argument("--calibration", action="store_true",
+                        help="Generate calibration signal")
+    parser.add_argument("--verify", action="store_true",
+                        help="Verify generated files")
+    parser.add_argument("--plot", action="store_true",
+                        help="Plot spectrum after generation")
+    parser.add_argument("--analyze", action="store_true",
+                        help="Analyze noise characteristics")
+    
+    args = parser.parse_args()
+    
+    if args.all_environments:
+        generate_all_environments(duration=args.duration, output_dir=args.output_dir)
+    
+    elif args.calibration:
+        generate_calibration_signal(duration=args.duration, output_dir=args.output_dir)
+    
+    else:
+        # Generate single file
+        generate_noise_floor_file(
+            duration_seconds=args.duration,
+            environment=args.environment,
+            output_path=Path(args.output_dir) / "noise_floor.iq"
+        )
+    
+    # Verify files
+    if args.verify:
+        output_dir = Path(args.output_dir)
+        for iq_file in output_dir.glob("noise_floor*.iq"):
+            verify_iq_file(iq_file)
+        if args.calibration:
+            verify_iq_file(output_dir / "calibration_signal.iq")
+    
+    # Plot spectrum
+    if args.plot:
+        output_path = Path(args.output_dir) / "noise_floor.iq"
+        if output_path.exists():
+            plot_spectrum(output_path, sample_rate=10e6)
+    
+    # Analyze noise characteristics
+    if args.analyze:
+        output_path = Path(args.output_dir) / "noise_floor.iq"
+        if output_path.exists():
+            analyze_noise_characteristics(output_path, sample_rate=10e6)
+
+
+if __name__ == "__main__":
+    main()
