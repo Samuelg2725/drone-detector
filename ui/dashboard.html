@@ -511,7 +511,8 @@
                     <div class="card full-width">
                         <div class="card-header">
                             <h3><i class="fas fa-wave-square"></i> Live HackRF Spectrum</h3>
-                            <span id="spectrumStatus" style="font-size: 0.85em; color: #888;">Waiting for first scan...</span>
+                            <span id="spectrumBandButtons"></span>
+                            <span id="spectrumStatus" style="font-size: 0.85em; color: #888;">Waiting for first sweep...</span>
                         </div>
                         <div class="card-content">
                             <canvas id="spectrumChart" height="90"></canvas>
@@ -697,6 +698,8 @@
         let analyticsChart = null;
         let spectrumChart = null;
         let lastSpectrumAt = 0;
+        let lastSpectrum = null;
+        let selectedBand = null;
         let droneMarkers = new Map();
         let detectionData = [];
         let alertData = [];
@@ -704,8 +707,10 @@
         // Initialize application
         document.addEventListener('DOMContentLoaded', function() {
             initWebSocket();
-            initMap();
-            initCharts();
+            // Map/charts come from CDNs; if one can't load (no internet),
+            // keep going so detections, alerts and status still show.
+            try { initMap(); } catch (e) { console.error('Map unavailable (Leaflet failed to load):', e); }
+            try { initCharts(); } catch (e) { console.error('Charts unavailable (Chart.js failed to load):', e); }
             loadInitialData();
             setupNavigation();
         });
@@ -1054,8 +1059,9 @@
                         <p><strong>Status:</strong> <span style="color: ${data.data.connected ? '#4caf50' : '#ff6b6b'};">${data.data.connected ? 'Connected (receiving samples)' : 'Not receiving samples'}</span></p>
                         <p><strong>Scans:</strong> ${data.data.scans_ok ?? 0} ok, ${data.data.scans_failed ?? 0} failed</p>
                         ${data.data.last_error ? `<p><strong>Last error:</strong> ${data.data.last_error}</p>` : ''}
-                        <p><strong>Sample Rate:</strong> ${(data.data.sample_rate_hz / 1e6).toFixed(1)} MHz</p>
-                        <p><strong>Center Frequency:</strong> ${(data.data.center_freq_hz / 1e9).toFixed(3)} GHz</p>
+                        <p><strong>Sweeping:</strong> ${Object.entries(data.data.sweep_ranges_mhz || {}).map(([b, r]) => `${r[0]}–${r[1]} MHz`).join(', ')}</p>
+                        <p><strong>Sweep time:</strong> ${data.data.sweep_seconds ?? '?'} s</p>
+                        <p><strong>Calibrated signatures:</strong> ${(data.data.calibrated_signatures || []).join(', ') || 'none (generic shape rules only)'}</p>
                         <p><strong>Temperature:</strong> ${data.data.temperature_celsius || 'N/A'} °C</p>
                         <p><strong>Uptime:</strong> ${formatUptime(data.data.uptime_seconds || 0)}</p>
                     `;
@@ -1084,29 +1090,47 @@
 
         function updateSpectrum(spec) {
             lastSpectrumAt = Date.now();
+            lastSpectrum = spec;
+            const bands = Object.keys(spec.bands || {});
+            if (!bands.length) return;
+            if (!selectedBand || !spec.bands[selectedBand]) selectedBand = bands[0];
+
+            document.getElementById('spectrumBandButtons').innerHTML = bands.map(b => {
+                const n = (spec.bands[b].peaks || []).length;
+                const active = b === selectedBand;
+                return `<button onclick="selectBand('${b}')" style="margin: 0 4px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+                        border: 1px solid #4facfe; background: ${active ? '#4facfe' : 'transparent'}; color: ${active ? '#000' : '#4facfe'};">
+                        ${b}${n ? ' (' + n + ')' : ''}</button>`;
+            }).join('');
+
+            const band = spec.bands[selectedBand];
             if (spectrumChart) {
-                spectrumChart.data.labels = spec.freqs_mhz.map(f => f.toFixed(1));
-                spectrumChart.data.datasets[0].data = spec.power_db;
-                spectrumChart.data.datasets[1].data = spec.freqs_mhz.map(() => spec.noise_floor_db);
+                spectrumChart.data.labels = band.freqs_mhz.map(f => f.toFixed(1));
+                spectrumChart.data.datasets[0].data = band.power_db;
+                spectrumChart.data.datasets[1].data = band.noise_db;
                 spectrumChart.update('none');
             }
-            const scanTxt = spec.scan_number ? `Scan #${spec.scan_number} · ` : '';
             const status = document.getElementById('spectrumStatus');
             status.style.color = '#4caf50';
-            status.innerText = `${scanTxt}${spec.center_freq_mhz.toFixed(1)} MHz ± ${(spec.sample_rate_mhz / 2).toFixed(0)} MHz · noise floor ${spec.noise_floor_db} dB · ${new Date(spec.timestamp).toLocaleTimeString()}`;
-            const peaks = spec.peaks || [];
+            status.innerText = `Sweep #${spec.scan_number} (${spec.sweep_seconds}s) · ${band.range_mhz[0]}–${band.range_mhz[1]} MHz · noise floor ${band.noise_floor_db} dB · ${new Date(spec.timestamp).toLocaleTimeString()}`;
+            const peaks = band.peaks || [];
             document.getElementById('spectrumPeaks').innerHTML = peaks.length
-                ? '<strong>Strongest RF activity</strong> (generic signals, not drone classifications): ' +
+                ? `<strong>Strongest RF activity in ${selectedBand}</strong> (generic signals, not drone classifications): ` +
                   peaks.map(p => `${p.frequency_mhz} MHz (+${p.above_noise_db} dB)`).join(' · ')
-                : 'No signals above the threshold right now.';
+                : `No signals above the threshold in ${selectedBand} right now.`;
+        }
+
+        function selectBand(b) {
+            selectedBand = b;
+            if (lastSpectrum) updateSpectrum(lastSpectrum);
         }
 
         // Flag it on screen if scans stop arriving, instead of silently freezing.
         setInterval(() => {
-            if (lastSpectrumAt && Date.now() - lastSpectrumAt > 5000) {
+            if (lastSpectrumAt && Date.now() - lastSpectrumAt > 10000) {
                 const status = document.getElementById('spectrumStatus');
                 status.style.color = '#ff6b6b';
-                status.innerText = 'No new HackRF scans for ' + Math.round((Date.now() - lastSpectrumAt) / 1000) + 's - check the terminal for "Scan error"';
+                status.innerText = 'No new HackRF sweeps for ' + Math.round((Date.now() - lastSpectrumAt) / 1000) + 's - check the terminal for "Scan error"';
             }
         }, 1000);
 
