@@ -713,7 +713,7 @@ if __name__ == "__main__":
             print(f"Sweeping {b}: {lo / 1e6:.0f}-{hi / 1e6:.0f}MHz in {len(rf.plan_hops(lo, hi))} hops")
         if signatures:
             print(f"Loaded {len(signatures)} calibrated signature(s): " + ", ".join(s_["name"] for s_ in signatures))
-        if pipeline.learning and not minutes:
+        if pipeline.learning:
             print(f"Learning the background for the first {args.learn_sweeps} sweeps - keep drones switched OFF "
                   f"until it says 'Background learned'.")
     else:

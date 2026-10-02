@@ -13,8 +13,10 @@ for every 1MHz of every band keep
     persistent                  busy >= 80% of the time (a fixed emitter)
     periodic                    busy on a regular cycle (beacons, meters...)
 
-It is saved to site_baseline.json (per sensor) and loaded automatically on
-the next start, which
+It never delays detection: it is built in the background while detecting
+(automatically the first time, over 10 minutes, from moments when nothing
+suspicious is going on), saved to site_baseline.json (per sensor) and
+loaded automatically on every later start, which
   * replaces the ~25s background learning - detection starts at once,
   * marks signals on frequencies that are normally busy (a known fixed
     emitter here) or normally quiet (new) in each detection's reasons.
@@ -211,10 +213,13 @@ class SiteBaseline:
                 "emitters": self.emitters()}
 
 
+AUTO_MINUTES = 10
+
+
 def add_args(ap):
     ap.add_argument("--baseline-minutes", type=float, default=0,
-                    help="record a site baseline for this many minutes now (5-15 recommended, NO drones flying), "
-                         "save it, then start detecting. Without this a saved baseline is loaded if there is one")
+                    help="(re)build the site baseline over this many minutes, in the background while detecting. "
+                         f"Not needed normally: with no saved baseline one is built automatically ({AUTO_MINUTES} min)")
     ap.add_argument("--no-baseline", action="store_true", help="ignore any saved site baseline")
 
 
@@ -223,14 +228,15 @@ def from_args(args, sensor_id, bands):
     if args.no_baseline:
         return None, 0
     b = SiteBaseline(sensor_id, bands)
+    loaded = b.load()
     if args.baseline_minutes > 0:
-        print(f"Recording a {args.baseline_minutes:g}-minute site baseline for '{sensor_id}' - make sure NO drones "
-              f"are flying. Detection starts when it finishes.")
+        print(f"Rebuilding the site baseline for '{sensor_id}' over {args.baseline_minutes:g} min in the background - "
+              f"detection runs as normal meanwhile" + (" (using the previous baseline until then)." if loaded else "."))
         return b, args.baseline_minutes
-    if b.load():
+    if loaded:
         print(f"Loaded site baseline for '{sensor_id}' recorded {b.recorded_at} - no startup learning needed.")
-    else:
-        print(f"No site baseline for '{sensor_id}' yet - recording one (--baseline-minutes 10) makes detection "
-              f"start at once and cuts false alarms.")
-    return b, 0
+        return b, 0
+    print(f"No site baseline for '{sensor_id}' yet - building one automatically over the next {AUTO_MINUTES} min "
+          f"in the background. Detection works meanwhile; it's saved and loaded instantly on later starts.")
+    return b, AUTO_MINUTES
 

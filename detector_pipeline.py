@@ -235,8 +235,8 @@ class DetectorPipeline:
         self.just_recorded = False
         self.baseline_minutes = baseline_minutes
         self.recording_until = time.time() + baseline_minutes * 60 if baseline is not None and baseline_minutes else None
-        if baseline is not None and self.recording_until is None and baseline.profile:
-            self._use_baseline()
+        if baseline is not None and baseline.profile:
+            self._use_baseline()          # a saved one is used even while a new one is being built
 
     def _use_baseline(self):
         """A saved baseline replaces the startup background learning."""
@@ -254,14 +254,15 @@ class DetectorPipeline:
         if self.recording_baseline:
             total = self.baseline_minutes * 60
             left = max(0.0, self.recording_until - time.time())
-            return {"state": "recording", "progress_pct": round(100 * (1 - left / total), 1), "seconds_left": int(left)}
+            return {"state": "recording", "progress_pct": round(100 * (1 - left / total), 1), "seconds_left": int(left),
+                    "recorded_at": self.baseline.recorded_at}
         if self.baseline.profile:
             return {"state": "loaded", "recorded_at": self.baseline.recorded_at}
         return {"state": "none"}
 
     @property
     def learning(self):
-        return self.recording_baseline or any(st.learning for st in self.states.values())
+        return any(st.learning for st in self.states.values())
 
     def _build_schedule(self):
         """One cycle's visit order. Bands with extra visits (manual
@@ -294,14 +295,15 @@ class DetectorPipeline:
         else:
             result = rf.sweep_band(self.receiver, band)
             summary = rf.spectrum_summary(result)
-            dets, clusters = rf.detections_for_band(result, self.signatures, self.analyzer, st.duty,
-                                                    None if self.recording_baseline else self.baseline)
-            if self.recording_baseline:
-                self.baseline.add(band, result, clusters)
-                dets = []
+            dets, clusters = rf.detections_for_band(result, self.signatures, self.analyzer, st.duty, self.baseline)
             summary["raw"] = rf.raw_view(result, clusters)
             found = fuse_band(band, dets, clusters, st, self.signatures)
-            if band in self.dual and not self.recording_baseline and not st.learning:
+            # The baseline builds in the BACKGROUND while detection runs -
+            # only from visits where nothing suspicious is going on, so a
+            # drone doesn't end up in "what's normal here".
+            if self.recording_baseline and not found and not st.active:
+                self.baseline.add(band, result, clusters)
+            if band in self.dual and not st.learning:
                 self.dual[band].append((time.time(), new_activity_level(band, clusters, st, self.baseline)))
                 found = self.apply_dual_band(band, found, clusters)
             summary["background"] = {
@@ -314,14 +316,13 @@ class DetectorPipeline:
         if band == control_link.CONTROL_BAND:
             st.active = bool(found) or sum(bool(x) for x in st.control.window) >= 3
 
-        if self.recording_baseline:
-            found = []
-            if time.time() >= self.recording_until:
-                self.baseline.finish(self.baseline_minutes)
-                self.recording_until = None
-                self.just_recorded = True
-                self._use_baseline()
-                print(f"Site baseline recorded ({self.baseline_minutes} min) and saved - detection is now active.")
+        if self.recording_baseline and time.time() >= self.recording_until:
+            self.baseline.finish(self.baseline_minutes)
+            self.recording_until = None
+            self.just_recorded = True
+            self._use_baseline()
+            print(f"Site baseline built ({self.baseline_minutes:g} min, in the background) and saved - "
+                  f"it's loaded automatically from now on.")
         now = time.time()
         self.recent[band] = (now, [dict(d) for d in found])
         others = [d for b, (t, ds) in self.recent.items() if b != band and now - t <= CORRELATION_WINDOW_S for d in ds]
@@ -395,9 +396,9 @@ class DetectorPipeline:
         summary = rf.spectrum_summary(result)
         packets = control_link.find_packets(samples, center)
         summary["raw"] = rf.raw_view(result, [], {"packets": packets[:60]})
-        if self.recording_baseline:
-            self.baseline.add(band, result, [])
         link = st.control.update(packets)
+        if self.recording_baseline and not link and not st.active:
+            self.baseline.add(band, result, [])
         st.background.sweeps += 1          # 868MHz learning period just counts sweeps
         summary["background"] = {"learning": st.learning, "sweeps": min(st.background.sweeps, st.learn_sweeps),
                                  "learn_sweeps": st.learn_sweeps, "busy_channels_mhz": []}

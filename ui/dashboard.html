@@ -757,14 +757,15 @@
                             <span style="color:#999">noise floor</span>. Same frequency axis as the waterfall below. Hover for values.
                         </div>
                         <div style="position: relative;">
-                            <canvas id="rawSpectrum" width="1024" height="200" style="width: 100%; height: 200px; background: #05050f; border-radius: 6px 6px 0 0;"></canvas>
+                            <canvas id="rawSpectrum" style="display: block; width: 100%; height: 230px; background: #05050f; border-radius: 6px 6px 0 0;"></canvas>
                             <div id="rawHover" style="position: absolute; top: 6px; right: 10px; font-size: 0.8em; color: #fff; background: rgba(0,0,0,0.6); padding: 2px 6px; border-radius: 4px; display: none;"></div>
                         </div>
                         <div style="font-size: 0.85em; color: #aaa; margin: 6px 0;">
-                            <b>Waterfall</b> - newest sweep at the top, one row per sweep. Brighter = stronger above that hop's noise floor
-                            (dark blue = noise, yellow/red = +30-40 dB). A hopping drone link shows as bright dashes jumping around.
+                            <b>Waterfall</b> - newest look at the top, one row per visit to this band. Colour = how far above the noise floor:
+                            dark = noise, blue = +5 dB, cyan = +10, yellow = +20, red/white = +30 dB or more. Steady signals make vertical
+                            stripes; a hopping drone link shows as bright dashes jumping around.
                         </div>
-                        <canvas id="waterfall" width="1024" height="220" style="width: 100%; height: 220px; background: #000; border-radius: 6px; image-rendering: pixelated;"></canvas>
+                        <canvas id="waterfall" style="display: block; width: 100%; height: 260px; background: #000; border-radius: 0 0 6px 6px;"></canvas>
                         <div id="waterfallAxis" style="display: flex; justify-content: space-between; font-size: 0.8em; color: #888; margin-top: 2px;"></div>
                     </div>
                 </div>
@@ -1566,7 +1567,7 @@
                 const b = d[sid] || {};
                 const st = b.status || {};
                 document.getElementById('baselineState').innerText =
-                    st.state === 'recording' ? `${sid}: recording... ${st.progress_pct}% (${st.seconds_left}s left) - no drones please`
+                    st.state === 'recording' ? `${sid}: building in the background (detection is running) - ${st.progress_pct}%, ${st.seconds_left}s left`
                     : st.state === 'loaded' ? `${sid}: recorded ${new Date(st.recorded_at).toLocaleString()}`
                     : `${sid || ''}: no baseline recorded`;
                 const em = (b.profile && b.profile.emitters) || [];
@@ -1685,42 +1686,59 @@
             if (!rawPaused) renderRaw(true);
         }
 
-        function heat(v) {        // 0..1 -> dark blue .. cyan .. yellow .. red
-            const stops = [[0, 0, 40], [0, 90, 200], [0, 220, 220], [255, 230, 0], [255, 40, 0]];
-            const x = Math.max(0, Math.min(1, v)) * (stops.length - 1);
-            const i = Math.min(Math.floor(x), stops.length - 2), f = x - i;
-            return stops[i].map((c, k) => Math.round(c + (stops[i + 1][k] - c) * f));
-        }
-
         const PEAK_HOLD_ROWS = 20;
         let rawSpectrumView = null;    // what's drawn, for the hover readout
 
+        // Draw at the screen's real pixel size (incl. Retina), not a fixed
+        // 1024px image stretched by the browser - that made text and lines blurry.
+        function fitCanvas(cv) {
+            const dpr = window.devicePixelRatio || 1;
+            const w = Math.round(cv.clientWidth * dpr), h = Math.round(cv.clientHeight * dpr);
+            if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+            const ctx = cv.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            return [ctx, cv.clientWidth, cv.clientHeight];
+        }
+
         function drawRawSpectrum(rows, band) {
             const cv = document.getElementById('rawSpectrum');
-            const ctx = cv.getContext('2d');
-            const W = cv.width, H = cv.height;
+            const [ctx, W, H] = fitCanvas(cv);
             ctx.fillStyle = '#05050f'; ctx.fillRect(0, 0, W, H);
             if (!rows.length) return;
-            const cur = rows[0], n = cur.power.length;
+            const cur = rows[0], n = cur.power.length, AXIS = 18;
             const peak = cur.power.slice();
             rows.slice(0, PEAK_HOLD_ROWS).forEach(r => r.power.forEach((v, i) => { if (v > peak[i]) peak[i] = v; }));
-            const lo = Math.floor((Math.min(...cur.noise) - 8) / 10) * 10;
-            const hi = Math.ceil((Math.max(...peak) + 5) / 10) * 10;
-            const y = v => H - (v - lo) / (hi - lo) * H;
+            const floor = cur.noise.slice().sort((a, b) => a - b)[Math.floor(n / 2)];
+            const lo = Math.floor((floor - 10) / 10) * 10;
+            const hi = Math.max(lo + 30, Math.ceil((Math.max(...peak) + 5) / 10) * 10);
+            const plotH = H - AXIS;
+            const y = v => plotH - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * plotH;
             const x = i => i / (n - 1) * W;
-            ctx.font = '12px sans-serif'; ctx.fillStyle = '#777'; ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+
+            ctx.font = '11px -apple-system, sans-serif'; ctx.textBaseline = 'bottom';
+            ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 1;
             for (let v = lo; v <= hi; v += 10) {
-                ctx.beginPath(); ctx.moveTo(0, y(v)); ctx.lineTo(W, y(v)); ctx.stroke();
-                ctx.fillText(`${v} dB`, 4, y(v) - 2);
+                ctx.beginPath(); ctx.moveTo(0, y(v) + 0.5); ctx.lineTo(W, y(v) + 0.5); ctx.stroke();
+                ctx.fillStyle = '#6b7280'; ctx.fillText(`${v} dB`, 4, y(v) - 1);
             }
-            const line = (arr, colour, dash, width) => {
-                ctx.beginPath(); ctx.setLineDash(dash); ctx.strokeStyle = colour; ctx.lineWidth = width;
-                arr.forEach((v, i) => i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v)));
-                ctx.stroke(); ctx.setLineDash([]);
-            };
-            line(cur.noise, '#999', [5, 4], 1);
-            line(peak, '#ffd54f', [], 1);
-            line(cur.power, '#4facfe', [], 1.5);
+            const f = band.freqs_mhz || [];
+            ctx.textBaseline = 'top'; ctx.fillStyle = '#9ca3af';
+            [0, 0.25, 0.5, 0.75, 1].forEach(t => {
+                const i = Math.round(t * (n - 1)), label = f[i] ? `${f[i].toFixed(1)} MHz` : '';
+                const tx = Math.min(Math.max(t * W - ctx.measureText(label).width / 2, 2), W - ctx.measureText(label).width - 2);
+                ctx.fillText(label, tx, plotH + 3);
+                ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.beginPath(); ctx.moveTo(t * W, 0); ctx.lineTo(t * W, plotH); ctx.stroke();
+            });
+
+            const path = arr => { ctx.beginPath(); arr.forEach((v, i) => i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v))); };
+            // filled area under the live trace, like SDR++ / Gqrx
+            path(cur.power); ctx.lineTo(W, plotH); ctx.lineTo(0, plotH); ctx.closePath();
+            const grad = ctx.createLinearGradient(0, 0, 0, plotH);
+            grad.addColorStop(0, 'rgba(79,172,254,0.45)'); grad.addColorStop(1, 'rgba(79,172,254,0.03)');
+            ctx.fillStyle = grad; ctx.fill();
+            ctx.setLineDash([4, 4]); ctx.strokeStyle = '#6b7280'; ctx.lineWidth = 1; path(cur.noise); ctx.stroke(); ctx.setLineDash([]);
+            ctx.strokeStyle = 'rgba(255,213,79,0.85)'; ctx.lineWidth = 1; path(peak); ctx.stroke();
+            ctx.strokeStyle = '#4facfe'; ctx.lineWidth = 1.5; path(cur.power); ctx.stroke();
             rawSpectrumView = {band, power: cur.power, peak, noise: cur.noise, freqs: band.freqs_mhz};
         }
 
@@ -1739,23 +1757,35 @@
             cv.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
         });
 
+        // Waterfall colours: black -> blue -> cyan -> yellow -> red -> white,
+        // over 0..WATERFALL_RANGE_DB above each slice's noise floor, with a
+        // gamma lift so signals 6-15dB up (most real ones) are clearly visible.
+        const WATERFALL_RANGE_DB = 30;
+        const HEAT = [[0, 0, 12], [10, 20, 90], [0, 110, 210], [0, 220, 220], [250, 235, 60], [255, 90, 20], [255, 255, 255]];
+        function heat(v) {
+            const x = Math.pow(Math.max(0, Math.min(1, v)), 0.6) * (HEAT.length - 1);
+            const i = Math.min(Math.floor(x), HEAT.length - 2), f = x - i;
+            return HEAT[i].map((c, k) => Math.round(c + (HEAT[i + 1][k] - c) * f));
+        }
+
         function drawWaterfall(rows) {
             const cv = document.getElementById('waterfall');
-            const ctx = cv.getContext('2d');
-            ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
+            const [ctx, W, H] = fitCanvas(cv);
+            ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
             if (!rows.length) return;
-            const w = rows[0].power.length, rowH = cv.height / RAW_HISTORY;
-            const img = ctx.createImageData(w, 1);
-            rows.forEach((r, y) => {
+            const w = rows[0].power.length, nRows = Math.min(rows.length, RAW_HISTORY);
+            const img = new ImageData(w, nRows);
+            for (let y = 0; y < nRows; y++) {
+                const r = rows[y];
                 for (let x = 0; x < w; x++) {
-                    const [cr, cg, cb] = heat((r.power[x] - r.noise[x]) / 40);
-                    img.data.set([cr, cg, cb, 255], x * 4);
+                    const [cr, cg, cb] = heat((r.power[x] - r.noise[x]) / WATERFALL_RANGE_DB);
+                    img.data.set([cr, cg, cb, 255], (y * w + x) * 4);
                 }
-                const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = 1;
-                tmp.getContext('2d').putImageData(img, 0, 0);
-                ctx.imageSmoothingEnabled = false;
-                ctx.drawImage(tmp, 0, Math.floor(y * rowH), cv.width, Math.ceil(rowH));
-            });
+            }
+            const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = nRows;
+            tmp.getContext('2d').putImageData(img, 0, 0);
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(tmp, 0, 0, W, H * nRows / RAW_HISTORY);
         }
 
         function ensureRawCharts() {
