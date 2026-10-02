@@ -29,6 +29,7 @@ Then open http://localhost:8000 in a browser.
 """
 import asyncio
 import json
+import os
 import threading
 import time
 import uuid
@@ -61,6 +62,7 @@ except ImportError:
 CENTER_FREQ_HZ = 2_450_000_000
 SAMPLE_RATE_HZ = 20_000_000  # HackRF's max - needed so a real ~20MHz-wide analog video signal fits entirely inside one capture, not just a cropped slice missing one or both tapering edges
 NUM_SAMPLES = 2 ** 17
+FFT_SIZE = 1024  # per averaged segment -> 19.5kHz bins at 20MS/s
 SCAN_INTERVAL_S = 1.0
 
 # The DC/LO leakage spike always sits exactly at the tuned center
@@ -69,44 +71,104 @@ SCAN_INTERVAL_S = 1.0
 # from detection so it's never reported as a "signal".
 DC_EXCLUSION_HZ = 50_000
 
-# How far above the noise floor (90th percentile, away from the DC
-# spike) a bin has to sit before it's reported as a detection.
+# How far above the noise floor (median, away from the DC spike) a bin
+# has to sit before it's listed as RF activity on the live spectrum.
 DETECTION_THRESHOLD_DB = 10.0
+
+# How many points of the live spectrum get pushed to the dashboard each
+# scan (max-pooled down from the full FFT so narrow peaks survive).
+SPECTRUM_DISPLAY_BINS = 1024
+
+# The dashboard shows "HackRF connected" only if a real capture finished
+# within this many seconds - not just because the script is running.
+STALE_AFTER_S = 5.0
 
 # ======================== HackRF (set up once in main) ======================== #
 
 sdr = None
 
+# RX is started ONCE and left streaming. Previously every scan called
+# start_rx/stop_rx; the one-shot test script only ever does that once, so
+# repeated restarts were never proven to work - and if the 2nd start_rx
+# silently delivers nothing, every later scan is all zeros (no data, no
+# detections) while the dashboard still says "connected". The callback
+# just drops buffers unless a capture has been requested.
+_capture = {
+    "buf": np.zeros(NUM_SAMPLES, dtype=np.complex64),
+    "idx": 0,
+    "active": False,
+    "last_callback": 0.0,
+}
+_capture_lock = threading.Lock()
+
+
+def rx_callback(device, buffer, buffer_length, valid_length):
+    _capture["last_callback"] = time.time()
+    with _capture_lock:
+        if not _capture["active"]:
+            return 0
+        raw = np.asarray(buffer[:valid_length]).astype(np.int8).astype(np.float32)
+        iq = (raw[0::2] + 1j * raw[1::2]) / 128.0
+        remaining = NUM_SAMPLES - _capture["idx"]
+        to_copy = min(len(iq), remaining)
+        _capture["buf"][_capture["idx"]:_capture["idx"] + to_copy] = iq[:to_copy]
+        _capture["idx"] += to_copy
+        if _capture["idx"] >= NUM_SAMPLES:
+            _capture["active"] = False
+    return 0
+
+
+def start_streaming():
+    sdr.set_rx_callback(rx_callback)
+    sdr.pyhackrf_start_rx()
+    _capture["last_callback"] = time.time()
+
+
+def restart_streaming():
+    print("HackRF stopped delivering samples - restarting RX stream...")
+    try:
+        sdr.pyhackrf_stop_rx()
+    except Exception as e:
+        print(f"  (stop_rx during restart failed: {e})")
+    time.sleep(0.2)
+    start_streaming()
+
 
 def scan_once():
     """One real HackRF capture + FFT. Returns (freqs_hz, magnitude_db, samples)."""
-    samples = np.zeros(NUM_SAMPLES, dtype=np.complex64)
-    state = {"idx": 0}
-
-    def callback(device, buffer, buffer_length, valid_length):
-        accepted = valid_length // 2
-        raw = buffer[:valid_length].astype(np.int8)
-        iq = (raw[0::2] + 1j * raw[1::2]) / 128.0
-        remaining = NUM_SAMPLES - state["idx"]
-        to_copy = min(accepted, remaining)
-        samples[state["idx"]:state["idx"] + to_copy] = iq[:to_copy]
-        state["idx"] += to_copy
-        return 0
-
-    sdr.set_rx_callback(callback)
-    sdr.pyhackrf_start_rx()
+    with _capture_lock:
+        _capture["idx"] = 0
+        _capture["active"] = True
 
     timeout = NUM_SAMPLES / SAMPLE_RATE_HZ + 1.0
     start = time.time()
-    while state["idx"] < NUM_SAMPLES and (time.time() - start) < timeout:
+    while _capture["active"] and (time.time() - start) < timeout:
         time.sleep(0.005)
 
-    sdr.pyhackrf_stop_rx()
+    with _capture_lock:
+        _capture["active"] = False
+        got = _capture["idx"]
+        samples = _capture["buf"][:got].copy()
 
-    window = np.hanning(len(samples))
-    spectrum = np.fft.fftshift(np.fft.fft(samples * window))
-    magnitude_db = 20 * np.log10(np.abs(spectrum) + 1e-12)
-    freqs_hz = np.fft.fftshift(np.fft.fftfreq(len(samples), d=1 / SAMPLE_RATE_HZ)) + CENTER_FREQ_HZ
+    if got < NUM_SAMPLES // 2:
+        # Don't FFT a mostly-zero buffer - that's what made the dashboard
+        # look "online" with nothing on it. Surface it as a real error.
+        if time.time() - _capture["last_callback"] > 2.0:
+            restart_streaming()
+        raise RuntimeError(f"HackRF delivered only {got}/{NUM_SAMPLES} samples in {timeout:.1f}s")
+
+    # Averaged (Welch) spectrum, not one giant raw FFT. A single raw FFT
+    # of 131k samples has 152Hz bins whose noise fluctuates wildly (~6% of
+    # pure-noise bins land 6dB above the median), so find_cluster's 300kHz
+    # (~2000-bin) gap tolerance merged random noise across the whole band
+    # into one sparse blob that the density check then rejected - real
+    # signals were never reported. ~128 averages of 1024-point FFTs
+    # (19.5kHz bins) leave the noise floor smooth to within ~0.5dB.
+    n_segments = len(samples) // FFT_SIZE
+    segments = samples[:n_segments * FFT_SIZE].reshape(n_segments, FFT_SIZE) * np.hanning(FFT_SIZE)
+    power = np.mean(np.abs(np.fft.fft(segments, axis=1)) ** 2, axis=0)
+    magnitude_db = 10 * np.log10(np.fft.fftshift(power) + 1e-12)
+    freqs_hz = np.fft.fftshift(np.fft.fftfreq(FFT_SIZE, d=1 / SAMPLE_RATE_HZ)) + CENTER_FREQ_HZ
     return freqs_hz, magnitude_db, samples
 
 
@@ -268,6 +330,9 @@ def find_cluster(freqs_hz, masked_db, noise_floor):
     }
 
 
+ANALOG_MIN_BANDWIDTH_MHZ = 2.0
+
+
 def classify_cluster(cluster):
     """Same thresholds as client.py's video-link classifier earlier in
     this project - tuned against real confirmed drone readings there
@@ -287,7 +352,11 @@ def classify_cluster(cluster):
     # analog taper and a true flat digital signal), while crest factor
     # and edge drop alone were confirmed to correctly tell them apart.
 
-    if cf >= 7.0 and edge >= 10.0:
+    # A video link is MHz wide. Without this, any narrow carrier
+    # (Bluetooth hop, CW tone, a spur) passes the crest-factor/edge-drop
+    # test trivially - confirmed: a 0.1MHz-wide test tone was labelled
+    # "Analog Video Link".
+    if cf >= 7.0 and edge >= 10.0 and cluster["bandwidth_mhz"] >= ANALOG_MIN_BANDWIDTH_MHZ:
         confidence = min(0.95, 0.5 + (cf - 7.0) / 20.0 + (edge - 10.0) / 40.0)
         return "Analog Video Link (unverified - shape match only)", round(confidence, 3)
 
@@ -299,11 +368,50 @@ def classify_cluster(cluster):
 
 
 
+def summarize_spectrum(freqs_hz, magnitude_db):
+    """Everything the dashboard needs to show what the HackRF is actually
+    seeing every scan - whether or not anything drone-shaped is in it."""
+    usable = np.abs(freqs_hz - CENTER_FREQ_HZ) >= DC_EXCLUSION_HZ
+    noise_floor = float(np.median(magnitude_db[usable]))
+
+    # Max-pool down to a displayable size so narrow peaks don't vanish.
+    bins = min(SPECTRUM_DISPLAY_BINS, len(magnitude_db))
+    n = len(magnitude_db) // bins * bins
+    disp_db = np.where(usable, magnitude_db, noise_floor)[:n].reshape(bins, -1).max(axis=1)
+    disp_mhz = freqs_hz[:n].reshape(bins, -1).mean(axis=1) / 1e6
+
+    # Strongest few signals above the threshold, at least 1MHz apart -
+    # generic RF activity (WiFi, Bluetooth, etc.), NOT drone classifications.
+    peaks = []
+    masked = np.where(usable, magnitude_db, -np.inf)
+    min_sep_hz = 1_000_000
+    for i in np.argsort(masked)[::-1]:
+        if len(peaks) >= 5 or masked[i] < noise_floor + DETECTION_THRESHOLD_DB:
+            break
+        f = float(freqs_hz[i])
+        if all(abs(f - p["freq_hz"]) >= min_sep_hz for p in peaks):
+            peaks.append({"freq_hz": f, "power_db": float(masked[i])})
+
+    return {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "center_freq_mhz": CENTER_FREQ_HZ / 1e6,
+        "sample_rate_mhz": SAMPLE_RATE_HZ / 1e6,
+        "noise_floor_db": round(noise_floor, 1),
+        "freqs_mhz": [round(float(x), 3) for x in disp_mhz],
+        "power_db": [round(float(x), 1) for x in disp_db],
+        "peaks": [{"frequency_mhz": round(p["freq_hz"] / 1e6, 3),
+                   "power_db": round(p["power_db"], 1),
+                   "above_noise_db": round(p["power_db"] - noise_floor, 1)} for p in peaks],
+    }
+
+
 # ======================== Shared state ======================== #
 
 detections = deque(maxlen=200)
 alerts = deque(maxlen=100)
 start_time = time.time()
+latest_spectrum = None
+scan_stats = {"scans_ok": 0, "scans_failed": 0, "last_ok": 0.0, "last_error": None}
 
 # ======================== WebSocket push (own thread, own event loop) ======================== #
 
@@ -357,10 +465,25 @@ def current_metrics():
 # ======================== HackRF scanning loop (own thread) ======================== #
 
 def scanning_loop():
+    global latest_spectrum
     while True:
         try:
             freqs_hz, magnitude_db, samples = scan_once()
+            latest_spectrum = summarize_spectrum(freqs_hz, magnitude_db)
+            scan_stats["scans_ok"] += 1
+            scan_stats["last_ok"] = time.time()
+            scan_stats["last_error"] = None
+            broadcast({"type": "spectrum", "data": {**latest_spectrum, "scan_number": scan_stats["scans_ok"]}})
+
             detection = find_detection(freqs_hz, magnitude_db, samples)
+
+            if scan_stats["scans_ok"] % 5 == 1:
+                top = latest_spectrum["peaks"][0] if latest_spectrum["peaks"] else None
+                top_txt = (f"strongest {top['power_db']}dB at {top['frequency_mhz']}MHz "
+                           f"(+{top['above_noise_db']}dB)") if top else "no signals above threshold"
+                print(f"Scan #{scan_stats['scans_ok']}: {len(samples)} samples, "
+                      f"noise floor {latest_spectrum['noise_floor_db']}dB, {top_txt}, "
+                      f"drone-shaped detection: {detection['drone_type'] if detection else 'none'}")
 
             if detection:
                 detections.appendleft(detection)
@@ -369,8 +492,8 @@ def scanning_loop():
                 if detection["threat_level"] == "high":
                     alert = {
                         "title": "Signal above threshold",
-                        "message": f"{detection['frequency_mhz']}MHz at {detection['power_db']}dB "
-                                   f"({detection['delta_above_noise_db']}dB above noise floor)",
+                        "message": f"{detection['drone_type']} at {detection['frequency_mhz']}MHz, "
+                                   f"{detection['power_db']}dB, ~{detection['bandwidth_mhz']}MHz wide",
                         "timestamp": detection["timestamp"],
                         "severity": "warning",
                     }
@@ -380,6 +503,8 @@ def scanning_loop():
             broadcast({"type": "metrics", "data": current_metrics()})
 
         except Exception as e:
+            scan_stats["scans_failed"] += 1
+            scan_stats["last_error"] = str(e)
             print(f"Scan error: {e}")
 
         time.sleep(SCAN_INTERVAL_S)
@@ -396,9 +521,14 @@ def root():
     return FileResponse("ui/dashboard.html")
 
 
-app.mount("/css", StaticFiles(directory="ui/css"), name="css")
-app.mount("/js", StaticFiles(directory="ui/js"), name="js")
-app.mount("/assets", StaticFiles(directory="ui/assets"), name="assets")
+for _name in ("css", "js", "assets"):
+    if os.path.isdir(f"ui/{_name}"):
+        app.mount(f"/{_name}", StaticFiles(directory=f"ui/{_name}"), name=_name)
+
+
+@app.get("/api/spectrum")
+def api_spectrum():
+    return {"success": latest_spectrum is not None, "data": latest_spectrum}
 
 
 @app.get("/api/detections")
@@ -422,7 +552,11 @@ def api_hardware_status():
         "success": True,
         "data": {
             "device_type": "HackRF One",
-            "connected": True,
+            # Real status: did a capture actually finish recently?
+            "connected": (time.time() - scan_stats["last_ok"]) < STALE_AFTER_S,
+            "scans_ok": scan_stats["scans_ok"],
+            "scans_failed": scan_stats["scans_failed"],
+            "last_error": scan_stats["last_error"],
             "sample_rate_hz": SAMPLE_RATE_HZ,
             "center_freq_hz": CENTER_FREQ_HZ,
             "temperature_celsius": None,
@@ -454,9 +588,15 @@ if __name__ == "__main__":
     sdr.pyhackrf_set_vga_gain(20)
     sdr.pyhackrf_set_amp_enable(False)
     sdr.pyhackrf_set_antenna_enable(False)
-    baseband_filter = min(SAMPLE_RATE_HZ * 0.8, 10e6)
+    # Was capped at 10MHz, which at 20MS/s filters away half the capture:
+    # the outer 5MHz each side read as a fake low "noise floor", so the
+    # whole passband sat above it. 0.75x the sample rate keeps (almost)
+    # the full width while still rejecting aliases.
+    baseband_filter = SAMPLE_RATE_HZ * 0.75
     allowed_filter = pyhackrf.pyhackrf_compute_baseband_filter_bw_round_down_lt(baseband_filter)
     sdr.pyhackrf_set_baseband_filter_bandwidth(allowed_filter)
+
+    start_streaming()
 
     threading.Thread(target=run_ws_server, daemon=True).start()
     threading.Thread(target=scanning_loop, daemon=True).start()
@@ -464,4 +604,12 @@ if __name__ == "__main__":
     print(f"Scanning {CENTER_FREQ_HZ / 1e6:.1f}MHz continuously...")
     print("Dashboard: http://localhost:8000")
     print("WebSocket: ws://localhost:8082/ws")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=8000)
+    finally:
+        try:
+            sdr.pyhackrf_stop_rx()
+            sdr.pyhackrf_close()
+            pyhackrf.pyhackrf_exit()
+        except Exception:
+            pass

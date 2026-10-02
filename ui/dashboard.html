@@ -507,6 +507,18 @@
 
                 <!-- Main Grid -->
                 <div class="dashboard-grid">
+                    <!-- Live HackRF spectrum -->
+                    <div class="card full-width">
+                        <div class="card-header">
+                            <h3><i class="fas fa-wave-square"></i> Live HackRF Spectrum</h3>
+                            <span id="spectrumStatus" style="font-size: 0.85em; color: #888;">Waiting for first scan...</span>
+                        </div>
+                        <div class="card-content">
+                            <canvas id="spectrumChart" height="90"></canvas>
+                            <div id="spectrumPeaks" style="margin-top: 10px; font-size: 0.9em; color: #ccc;"></div>
+                        </div>
+                    </div>
+
                     <!-- Map -->
                     <div class="card full-width">
                         <div class="card-header">
@@ -544,7 +556,7 @@
                                             <th>Drone Type</th>
                                             <th>Confidence</th>
                                             <th>Threat</th>
-                                            <th>Location</th>
+                                            <th>Frequency</th>
                                         </tr>
                                     </thead>
                                     <tbody id="detectionsTableBody">
@@ -683,6 +695,8 @@
         let fullMap = null;
         let confidenceChart = null;
         let analyticsChart = null;
+        let spectrumChart = null;
+        let lastSpectrumAt = 0;
         let droneMarkers = new Map();
         let detectionData = [];
         let alertData = [];
@@ -734,6 +748,9 @@
                     break;
                 case 'metrics':
                     updateMetrics(data.data);
+                    break;
+                case 'spectrum':
+                    updateSpectrum(data.data);
                     break;
                 case 'position':
                     updateDronePosition(data.data);
@@ -804,6 +821,47 @@
                 }
             });
             
+            const spectrumCtx = document.getElementById('spectrumChart').getContext('2d');
+            spectrumChart = new Chart(spectrumCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Power (dB)',
+                        data: [],
+                        borderColor: '#4facfe',
+                        borderWidth: 1,
+                        pointRadius: 0,
+                        fill: false
+                    }, {
+                        label: 'Noise floor',
+                        data: [],
+                        borderColor: '#888',
+                        borderDash: [4, 4],
+                        borderWidth: 1,
+                        pointRadius: 0,
+                        fill: false
+                    }]
+                },
+                options: {
+                    animation: false,
+                    responsive: true,
+                    plugins: { legend: { labels: { color: '#e0e0e0' } } },
+                    scales: {
+                        x: {
+                            ticks: { color: '#aaa', maxTicksLimit: 11 },
+                            grid: { color: 'rgba(255,255,255,0.1)' },
+                            title: { display: true, text: 'Frequency (MHz)', color: '#e0e0e0' }
+                        },
+                        y: {
+                            ticks: { color: '#aaa' },
+                            grid: { color: 'rgba(255,255,255,0.1)' },
+                            title: { display: true, text: 'Power (dB)', color: '#e0e0e0' }
+                        }
+                    }
+                }
+            });
+
             const analyticsCtx = document.getElementById('analyticsChart').getContext('2d');
             analyticsChart = new Chart(analyticsCtx, {
                 type: 'bar',
@@ -879,7 +937,8 @@
                     loadDetections(),
                     loadActiveAlerts(),
                     loadSystemMetrics(),
-                    loadHardwareStatus()
+                    loadHardwareStatus(),
+                    loadSpectrum()
                 ]);
             } catch (error) {
                 console.error('Error loading initial data:', error);
@@ -992,7 +1051,9 @@
                     
                     container.innerHTML = `
                         <p><strong>Device:</strong> ${data.data.device_type || 'Unknown'}</p>
-                        <p><strong>Status:</strong> <span style="color: #4caf50;">${data.data.connected ? 'Connected' : 'Disconnected'}</span></p>
+                        <p><strong>Status:</strong> <span style="color: ${data.data.connected ? '#4caf50' : '#ff6b6b'};">${data.data.connected ? 'Connected (receiving samples)' : 'Not receiving samples'}</span></p>
+                        <p><strong>Scans:</strong> ${data.data.scans_ok ?? 0} ok, ${data.data.scans_failed ?? 0} failed</p>
+                        ${data.data.last_error ? `<p><strong>Last error:</strong> ${data.data.last_error}</p>` : ''}
                         <p><strong>Sample Rate:</strong> ${(data.data.sample_rate_hz / 1e6).toFixed(1)} MHz</p>
                         <p><strong>Center Frequency:</strong> ${(data.data.center_freq_hz / 1e9).toFixed(3)} GHz</p>
                         <p><strong>Temperature:</strong> ${data.data.temperature_celsius || 'N/A'} °C</p>
@@ -1011,6 +1072,44 @@
             }
         }
         
+        async function loadSpectrum() {
+            try {
+                const response = await fetch(`${API_URL}/spectrum`);
+                const data = await response.json();
+                if (data.success && data.data) updateSpectrum(data.data);
+            } catch (error) {
+                console.error('Error loading spectrum:', error);
+            }
+        }
+
+        function updateSpectrum(spec) {
+            lastSpectrumAt = Date.now();
+            if (spectrumChart) {
+                spectrumChart.data.labels = spec.freqs_mhz.map(f => f.toFixed(1));
+                spectrumChart.data.datasets[0].data = spec.power_db;
+                spectrumChart.data.datasets[1].data = spec.freqs_mhz.map(() => spec.noise_floor_db);
+                spectrumChart.update('none');
+            }
+            const scanTxt = spec.scan_number ? `Scan #${spec.scan_number} · ` : '';
+            const status = document.getElementById('spectrumStatus');
+            status.style.color = '#4caf50';
+            status.innerText = `${scanTxt}${spec.center_freq_mhz.toFixed(1)} MHz ± ${(spec.sample_rate_mhz / 2).toFixed(0)} MHz · noise floor ${spec.noise_floor_db} dB · ${new Date(spec.timestamp).toLocaleTimeString()}`;
+            const peaks = spec.peaks || [];
+            document.getElementById('spectrumPeaks').innerHTML = peaks.length
+                ? '<strong>Strongest RF activity</strong> (generic signals, not drone classifications): ' +
+                  peaks.map(p => `${p.frequency_mhz} MHz (+${p.above_noise_db} dB)`).join(' · ')
+                : 'No signals above the threshold right now.';
+        }
+
+        // Flag it on screen if scans stop arriving, instead of silently freezing.
+        setInterval(() => {
+            if (lastSpectrumAt && Date.now() - lastSpectrumAt > 5000) {
+                const status = document.getElementById('spectrumStatus');
+                status.style.color = '#ff6b6b';
+                status.innerText = 'No new HackRF scans for ' + Math.round((Date.now() - lastSpectrumAt) / 1000) + 's - check the terminal for "Scan error"';
+            }
+        }, 1000);
+
         async function loadAnalytics() {
             try {
                 const response = await fetch(`${API_URL}/analytics/detections/trends?days=7`);
@@ -1040,7 +1139,7 @@
                     <td>${d.drone_type || 'Unknown'}</td>
                     <td>${((d.confidence || 0) * 100).toFixed(1)}%</td>
                     <td><span class="threat-badge threat-${(d.threat_level || 'low').toLowerCase()}">${d.threat_level || 'LOW'}</span></td>
-                    <td>${d.latitude?.toFixed(2) || '?'}, ${d.longitude?.toFixed(2) || '?'}</td>
+                    <td>${d.frequency_mhz != null ? d.frequency_mhz + ' MHz' : '?'}</td>
                 </tr>
             `).join('');
         }
