@@ -43,7 +43,9 @@ def station_level(samples, offset_hz):
     p = np.fft.fftshift(np.abs(np.fft.fft(blocks, axis=1)) ** 2, axes=1)
     f = (np.arange(BLOCK) - BLOCK // 2) * rf.SAMPLE_RATE_HZ / BLOCK
     sel = np.abs(f - offset_hz) <= 60_000
-    return 10 * np.log10(p[:, sel].max(axis=1) / (np.median(p, axis=1) + 1e-20) + 1e-20)
+    # Mean (not max) over the station's width: pure noise averages ~1.6dB
+    # here, while a max of ~25 noisy bins would sit ~6-7dB up by chance.
+    return 10 * np.log10(p[:, sel].mean(axis=1) / (np.median(p, axis=1) + 1e-20) + 1e-20)
 
 
 RUN = 8                            # blocks in a row needed to call a change (noise can poke above the line)
@@ -83,9 +85,32 @@ def raw_capture_hackrf(rx, center_hz, n):
         return rx.buf[:rx.idx].copy()
 
 
+def pick_quiet(rx, a):
+    """A 'quiet' tuning whose +3MHz spot really is empty. The first version
+    jumped exactly 300MHz, which on a real HackRF landed the test spot on
+    400.0MHz - an internal spur at a round frequency - so the 'station'
+    never seemed to go away. Check candidates (avoiding round numbers)
+    with a normal settled capture and use the first one that is quiet."""
+    for k in range(12):
+        b = a + QUIET_JUMP_HZ + 1_370_000 + k * 7_730_000
+        level = float(np.median(station_level(rx.capture(b, 2 ** 17), STATION_OFFSET_HZ)))
+        if level < 3.0:
+            return b
+    raise SystemExit("Couldn't find a quiet frequency to compare against - try a different --station-mhz")
+
+
+def check_station(rx, a):
+    level = float(np.median(station_level(rx.capture(a, 2 ** 17), STATION_OFFSET_HZ)))
+    if level < PRESENT_DB + 3:
+        raise SystemExit(f"The station is only +{level:.0f} dB in a settled capture - too weak to time against. "
+                         "Try another with --station-mhz")
+
+
 def measure_hackrf(rx, station_hz, trials):
     a = station_hz - STATION_OFFSET_HZ          # station appears at +3MHz when tuned to a
-    b = a + QUIET_JUMP_HZ
+    check_station(rx, a)
+    b = pick_quiet(rx, a)
+    print(f"Comparing against {b / 1e6:.2f} MHz (checked quiet at the test spot)")
     n = rf.MAX_CAPTURE_SAMPLES
     worst = 0
     for t in range(trials):
@@ -107,7 +132,9 @@ def measure_hackrf(rx, station_hz, trials):
 
 def measure_pluto(rx, station_hz, trials, reads=4):
     a = station_hz - STATION_OFFSET_HZ
-    b = a + QUIET_JUMP_HZ
+    check_station(rx, a)
+    b = pick_quiet(rx, a)
+    print(f"Comparing against {b / 1e6:.2f} MHz (checked quiet at the test spot)")
     worst = 0
     for t in range(trials):
         rx.capture(a, rf.NUM_SAMPLES)
@@ -152,6 +179,9 @@ def main():
             pass
         if args.sdr == "hackrf":
             worst = measure_hackrf(rx, station_hz, args.trials)
+            if worst >= rf.MAX_CAPTURE_SAMPLES - BLOCK * RUN:
+                raise SystemExit("The old frequency never seemed to disappear - the measurement isn't valid, "
+                                 "nothing saved. Try another station with --station-mhz.")
             settle = int(np.ceil((worst + 16384) / 16384) * 16384)   # + ~0.8ms margin
             old = 2 ** 19
             existing["hackrf_settle_samples"] = settle
