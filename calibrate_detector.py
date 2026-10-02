@@ -94,38 +94,111 @@ def find_drone_regions(base_b, drone_b, n_base, n_drone):
     return regions
 
 
-def pct(values, lo=5, hi=95):
-    return float(np.percentile(values, lo)), float(np.percentile(values, hi))
+def pct(values, q):
+    return float(np.percentile(values, q))
 
 
-def build_signature(name, band, region, drone_clusters, any_frequency):
+# Candidate drone signals: at least this wide and this far above noise.
+MIN_CANDIDATE_BW_MHZ = 1.0
+MIN_CANDIDATE_ABOVE_NOISE_DB = 12.0
+# Peaks within this distance of each other are the same channel.
+CHANNEL_TOLERANCE_MHZ = 0.6
+# Sliding window (in sweeps) used to decide whether a signal hops.
+WINDOW_SWEEPS = 5
+
+
+def learn_channels(peaks):
+    """Group peak frequencies into channels: peaks recurring within
+    CHANNEL_TOLERANCE_MHZ of each other, often enough to not be chance."""
+    peaks = sorted(peaks)
+    groups, cur = [], [peaks[0]]
+    for p in peaks[1:]:
+        if p - cur[-1] <= CHANNEL_TOLERANCE_MHZ:
+            cur.append(p)
+        else:
+            groups.append(cur)
+            cur = [p]
+    groups.append(cur)
+    min_count = max(3, int(0.05 * len(peaks)))
+    return [round(float(np.median(g)), 2) for g in groups if len(g) >= min_count]
+
+
+def evaluate(sig, sweeps, band):
+    """(per-sweep match rate, confirmed rate) - 'confirmed' uses the same
+    SignatureTracker logic as the dashboard backend."""
+    tracker = rf.SignatureTracker(sig)
+    matched = confirmed = 0
+    for sw in sweeps:
+        chans = {ch for c in sw for ch in [rf.matches_signature(c, sig, band)] if ch is not None}
+        ok, _ = tracker.update(chans)
+        matched += bool(chans)
+        confirmed += ok
+    n = max(len(sweeps), 1)
+    return matched / n, confirmed / n
+
+
+def learn_signature(name, band, regions, drone_b, base_b, any_frequency):
     pad = 2.0
-    in_region = [c for sweep in drone_clusters for c in sweep
-                 if region["lo_mhz"] - pad <= c["center_mhz"] <= region["hi_mhz"] + pad]
-    if len(in_region) < MIN_MATCHING_CLUSTERS:
-        return None, len(in_region)
-    cen = pct([c["center_mhz"] for c in in_region])
-    bw = pct([c["bandwidth_mhz"] for c in in_region])
-    cf = pct([c["crest_factor_db"] for c in in_region])
-    ed = pct([c["edge_drop_db"] for c in in_region])
+    in_regions = lambda f: any(r["lo_mhz"] - pad <= f <= r["hi_mhz"] + pad for r in regions)
+    cands = [c for sw in drone_b["clusters"] for c in sw
+             if c["bandwidth_mhz"] >= MIN_CANDIDATE_BW_MHZ
+             and c["above_noise_db"] >= MIN_CANDIDATE_ABOVE_NOISE_DB
+             and in_regions(c["peak_mhz"])]
+    if len(cands) < MIN_MATCHING_CLUSTERS:
+        print(f"  Only {len(cands)} measurable drone signal(s) - too few to learn from.")
+        return None
+
+    channels = learn_channels([c["peak_mhz"] for c in cands])
+    if not channels:
+        print("  The drone's signal peaks never repeated on the same frequency - can't learn channels.")
+        return None
+
+    # Drop channels your background also uses - a channel the baseline
+    # hits in 10%+ of sweeps would make the signature fire on it.
+    busy = []
+    for ch in channels:
+        rate = np.mean([any(abs(c["peak_mhz"] - ch) <= CHANNEL_TOLERANCE_MHZ and
+                            c["bandwidth_mhz"] >= MIN_CANDIDATE_BW_MHZ for c in sw)
+                        for sw in base_b["clusters"]]) if base_b["clusters"] else 0
+        if rate >= 0.10:
+            busy.append(ch)
+    if busy:
+        print(f"  Ignoring channel(s) {busy}MHz - also busy with the drone OFF.")
+    channels = [ch for ch in channels if ch not in busy]
+    if not channels:
+        return None
+
+    on_ch = [c for c in cands if min(abs(c["peak_mhz"] - ch) for ch in channels) <= CHANNEL_TOLERANCE_MHZ]
+    bw = [c["bandwidth_mhz"] for c in on_ch]
     sig = {
-        "name": f"{name} ({band} {round((region['lo_mhz'] + region['hi_mhz']) / 2)}MHz)",
+        "format": 2,
+        "name": f"{name} ({band})",
         "band": band,
         "any_frequency": any_frequency,
-        "center_mhz": [round(cen[0] - 1.0, 2), round(cen[1] + 1.0, 2)],
-        "bandwidth_mhz": [round(bw[0] * 0.8, 2), round(bw[1] * 1.2, 2)],
-        "crest_factor_db": [round(cf[0] - 1.5, 1), round(cf[1] + 1.5, 1)],
-        "edge_drop_db": [round(ed[0] - 2.0, 1), round(ed[1] + 2.0, 1)],
+        "channels_mhz": channels,
+        "channel_tolerance_mhz": CHANNEL_TOLERANCE_MHZ,
+        # One-sided minimums with a margin rather than tight ranges: the
+        # drone further away (weaker) measures less peaked than up close.
+        "bandwidth_mhz": [round(max(0.5, pct(bw, 5) * 0.7), 2), round(pct(bw, 95) * 1.3, 2)],
+        "min_crest_factor_db": round(pct([c["crest_factor_db"] for c in on_ch], 10) - 2.0, 1),
+        "min_edge_drop_db": round(pct([c["edge_drop_db"] for c in on_ch], 10) - 3.0, 1),
+        "min_above_noise_db": MIN_CANDIDATE_ABOVE_NOISE_DB,
+        "window_sweeps": WINDOW_SWEEPS,
+        "min_channels_in_window": 1,
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "samples": len(in_region),
+        "samples": len(on_ch),
     }
-    return sig, len(in_region)
 
-
-def sweep_hit_rate(sweeps, band, test):
-    if not sweeps:
-        return 0.0
-    return sum(any(test(c) for c in s) for s in sweeps) / len(sweeps)
+    # Hopping? If, with the drone on, most 5-sweep windows contain 2+
+    # different channels, require that before confirming. That is what
+    # stops a WiFi router parked on one of those channels from matching.
+    if len(channels) >= 2:
+        hop_sig = dict(sig, min_channels_in_window=2)
+        _, hop_rate = evaluate(hop_sig, drone_b["clusters"], band)
+        if hop_rate >= 0.5:
+            sig = hop_sig
+    sig["hopping"] = sig["min_channels_in_window"] >= 2
+    return sig
 
 
 def analyze(session, name, any_frequency):
@@ -134,7 +207,7 @@ def analyze(session, name, any_frequency):
     if base["sweeps"] < 5 or drone["sweeps"] < 5:
         print("WARNING: fewer than 5 sweeps in a phase - results will be unreliable. Use a longer --seconds.")
 
-    new_sigs = []
+    good, rejected = [], []
     for band, drone_b in drone["bands"].items():
         base_b = base["bands"].get(band)
         if base_b is None:
@@ -142,52 +215,54 @@ def analyze(session, name, any_frequency):
         print(f"\n=== {band} ===")
         print(f"Noise floor: baseline {np.median(base_b['noise_floor_db']):.1f}dB, "
               f"drone {np.median(drone_b['noise_floor_db']):.1f}dB")
-
-        # Generic rules on the same data, for comparison.
-        generic = lambda c: rf.classify_cluster(c, band) is not None
-        print(f"Generic shape rules: fired in {sweep_hit_rate(base_b['clusters'], band, generic):.0%} of "
-              f"BASELINE sweeps (false alarms) and {sweep_hit_rate(drone_b['clusters'], band, generic):.0%} "
-              f"of DRONE sweeps")
+        generic = lambda sw: any(rf.classify_cluster(c, band) is not None for c in sw)
+        g_base = np.mean([generic(sw) for sw in base_b["clusters"]])
+        g_drone = np.mean([generic(sw) for sw in drone_b["clusters"]])
+        print(f"Generic shape rules: fired in {g_base:.0%} of BASELINE sweeps (false alarms) "
+              f"and {g_drone:.0%} of DRONE sweeps")
 
         regions = find_drone_regions(base_b, drone_b, base["sweeps"], drone["sweeps"])
         if not regions:
             print("No frequencies were consistently busier with the drone on. Either it isn't transmitting "
-                  "in this band, it's too weak (move it closer / try --amp), or it frequency-hops "
-                  "(hopping control links can't be learned this way).")
+                  "in this band, or it's too weak (move it closer / try --amp).")
             continue
-
         for r in regions:
-            print(f"\nDrone-only activity {r['lo_mhz']}-{r['hi_mhz']}MHz "
+            print(f"Drone-only activity {r['lo_mhz']}-{r['hi_mhz']}MHz "
                   f"(busy {r['drone_occupancy']:.0%} of drone sweeps vs {r['baseline_occupancy']:.0%} baseline)")
-            sig, n = build_signature(name, band, r, drone_b["clusters"], any_frequency)
-            if sig is None:
-                print(f"  Only {n} measurable signal(s) there - too few/inconsistent to learn a signature.")
-                continue
-            m = lambda c, s=sig: rf.matches_signature(c, s, band)
-            recall = sweep_hit_rate(drone_b["clusters"], band, m)
-            false_rate = sweep_hit_rate(base_b["clusters"], band, m)
-            in_region = lambda c, r=r: r["lo_mhz"] - 2 <= c["center_mhz"] <= r["hi_mhz"] + 2
-            generic_recall = sweep_hit_rate(drone_b["clusters"], band, lambda c: in_region(c) and generic(c))
-            sig["detection_rate"] = round(recall, 3)
-            sig["baseline_false_alarm_rate"] = round(false_rate, 3)
-            sig["confidence"] = 0.9 if false_rate == 0 and recall >= 0.8 else (0.75 if false_rate < 0.05 else 0.6)
-            print(f"  Learned shape: {sig['bandwidth_mhz'][0]}-{sig['bandwidth_mhz'][1]}MHz wide, "
-                  f"crest {sig['crest_factor_db'][0]}-{sig['crest_factor_db'][1]}dB, "
-                  f"edge drop {sig['edge_drop_db'][0]}-{sig['edge_drop_db'][1]}dB")
-            print(f"  Signature caught the drone in {recall:.0%} of drone sweeps; "
-                  f"false alarms in {false_rate:.0%} of baseline sweeps")
-            print(f"  (Generic rules caught it in {generic_recall:.0%} of drone sweeps)")
-            if false_rate >= 0.05:
-                print("  WARNING: this signature also matches your background - it will cause false alarms.")
-            new_sigs.append(sig)
-    return new_sigs
+
+        sig = learn_signature(name, band, regions, drone_b, base_b, any_frequency)
+        if sig is None:
+            continue
+        d_match, d_conf = evaluate(sig, drone_b["clusters"], band)
+        b_match, b_conf = evaluate(sig, base_b["clusters"], band)
+        sig["detection_rate"] = round(d_conf, 3)
+        sig["baseline_false_alarm_rate"] = round(b_conf, 3)
+        sig["confidence"] = 0.9 if b_conf == 0 and d_conf >= 0.8 else 0.75
+
+        print(f"Learned: channels {', '.join(f'{c:g}' for c in sig['channels_mhz'])}MHz"
+              + (" - FREQUENCY HOPPING (must be seen on 2+ channels within "
+                 f"{sig['window_sweeps']} sweeps to confirm)" if sig["hopping"] else " - fixed channel"))
+        print(f"  Shape: {sig['bandwidth_mhz'][0]}-{sig['bandwidth_mhz'][1]}MHz wide, "
+              f"crest >= {sig['min_crest_factor_db']}dB, edge drop >= {sig['min_edge_drop_db']}dB, "
+              f">= {sig['min_above_noise_db']}dB above noise")
+        print(f"  Drone ON : matched {d_match:.0%} of sweeps, confirmed {d_conf:.0%}")
+        print(f"  Drone OFF: matched {b_match:.0%} of sweeps, confirmed {b_conf:.0%} (false alarms)")
+        if b_conf >= 0.05:
+            print("  NOT SAVED: it also confirms on your background - would cause false alarms.")
+            rejected.append(sig)
+        elif d_conf < 0.5:
+            print("  NOT SAVED: it only confirmed the drone in under half the sweeps - too unreliable.")
+            rejected.append(sig)
+        else:
+            good.append(sig)
+    return good
 
 
 def save_signatures(new_sigs, name):
     existing = rf.load_signatures()
-    kept = [s for s in existing if not s["name"].startswith(f"{name} (")]
+    kept = [s for s in existing if not s["name"].startswith(f"{name} (") and "channels_mhz" in s]
     if len(kept) != len(existing):
-        print(f"Replacing {len(existing) - len(kept)} earlier signature(s) named '{name}'.")
+        print(f"Replacing {len(existing) - len(kept)} earlier/old-format signature(s).")
     with open(rf.SIGNATURES_FILE, "w") as fh:
         json.dump({"signatures": kept + new_sigs}, fh, indent=2)
     print(f"Saved {len(new_sigs)} signature(s) to {rf.SIGNATURES_FILE}. "

@@ -125,12 +125,16 @@ def record_detection(det):
     for d in detections:
         if now - d["_last_seen"] > REPEAT_WINDOW_S:
             break  # newest first - everything after is older still
+        same_signature = det.get("signature") and d.get("signature") == det["signature"]
         if (d["band"] == det["band"] and d["drone_type"] == det["drone_type"]
-                and abs(d["frequency_mhz"] - det["frequency_mhz"]) <= 2.0):
+                and (same_signature or abs(d["frequency_mhz"] - det["frequency_mhz"]) <= 2.0)):
             d["_last_seen"] = now
             d["hits"] += 1
             d["last_seen"] = time.strftime("%Y-%m-%dT%H:%M:%S")
             d["confidence"] = max(d["confidence"], det["confidence"])
+            d["frequency_mhz"] = det["frequency_mhz"]
+            if det.get("channels_seen"):
+                d["channels_seen"] = det["channels_seen"]
             return False
     det.update({
         "id": str(uuid.uuid4())[:8],
@@ -147,6 +151,33 @@ def public(det):
     return {k: v for k, v in det.items() if not k.startswith("_")}
 
 
+def apply_signature_tracking(found, trackers):
+    """Calibrated matches -> one detection per signature per sweep. A
+    hopping signature is only reported as CONFIRMED (high) once it has
+    been seen on 2+ of its channels within its sweep window; before that
+    it's a low-confidence 'unconfirmed' sighting."""
+    out = [d for d in found if d["method"] != "calibrated"]
+    for sig in signatures:
+        tracker = trackers.setdefault(sig["name"], rf.SignatureTracker(sig))
+        hits = [d for d in found if d.get("signature") == sig["name"]]
+        confirmed, seen = tracker.update({d["channel_mhz"] for d in hits})
+        if not hits:
+            continue
+        best = dict(max(hits, key=lambda d: d["above_noise_db"]))
+        best["channels_seen"] = seen
+        if confirmed:
+            best["drone_type"] = (f"{sig['name']} - hopping confirmed" if sig.get("hopping")
+                                  else f"{sig['name']}")
+            best["confidence"] = float(sig.get("confidence", 0.85))
+        else:
+            best["drone_type"] = f"{sig['name']} - unconfirmed (1 channel so far)"
+            best["confidence"] = 0.5
+        best["threat_level"] = ("high" if best["confidence"] > 0.8 else
+                                "medium" if best["confidence"] > 0.6 else "low")
+        out.append(best)
+    return out
+
+
 def scanning_loop():
     global latest_spectrum
     analyzer = None
@@ -156,6 +187,7 @@ def scanning_loop():
         except Exception as e:
             print(f"Modulation analyzer unavailable ({e}) - continuing without it")
 
+    trackers = {}
     while True:
         try:
             t0 = time.time()
@@ -165,6 +197,7 @@ def scanning_loop():
                 spectra[band] = rf.spectrum_summary(result)
                 dets, _ = rf.detections_for_band(result, signatures, analyzer)
                 found.extend(dets)
+            found = apply_signature_tracking(found, trackers)
 
             scan_stats["scans_ok"] += 1
             scan_stats["last_ok"] = time.time()

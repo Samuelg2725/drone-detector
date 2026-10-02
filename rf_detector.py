@@ -313,13 +313,51 @@ def _in(value, rng):
 
 
 def matches_signature(cluster, sig, band):
+    """Returns the matched channel (MHz) if the cluster fits the signature,
+    else None.
+
+    Signatures learned by calibrate_detector.py list the exact channels
+    the drone transmits on; a cluster matches if its PEAK sits on one of
+    them and its shape clears the learned minimums. (A hopping drone's
+    clusters get merged/smeared by the sweep, so the peak is far more
+    stable than the cluster's centre or width - measured on a real
+    recording: peaks landed within 0.2MHz of the same 5 channels.)"""
     if sig.get("band") and sig["band"] != band:
-        return False
-    if not sig.get("any_frequency") and not _in(cluster["center_mhz"], sig["center_mhz"]):
-        return False
-    return (_in(cluster["bandwidth_mhz"], sig["bandwidth_mhz"])
-            and _in(cluster["crest_factor_db"], sig["crest_factor_db"])
-            and _in(cluster["edge_drop_db"], sig["edge_drop_db"]))
+        return None
+    if "channels_mhz" not in sig:
+        return None  # old signature format - re-run calibrate_detector.py
+    tol = sig.get("channel_tolerance_mhz", 0.6)
+    ch = min(sig["channels_mhz"], key=lambda x: abs(cluster["peak_mhz"] - x))
+    on_channel = abs(cluster["peak_mhz"] - ch) <= tol
+    if not on_channel and not sig.get("any_frequency"):
+        return None
+    ok = (_in(cluster["bandwidth_mhz"], sig["bandwidth_mhz"])
+          and cluster["crest_factor_db"] >= sig["min_crest_factor_db"]
+          and cluster["edge_drop_db"] >= sig["min_edge_drop_db"]
+          and cluster["above_noise_db"] >= sig["min_above_noise_db"])
+    if not ok:
+        return None
+    return ch if on_channel else round(cluster["peak_mhz"], 1)
+
+
+class SignatureTracker:
+    """Remembers which of a signature's channels matched in each of the
+    last N sweeps. A hopping signature is only CONFIRMED once it has been
+    seen on >= min_channels_in_window different channels inside that
+    window - a WiFi router sits on one channel, a hopping video link
+    doesn't."""
+
+    def __init__(self, sig):
+        from collections import deque
+        self.sig = sig
+        self.window = deque(maxlen=int(sig.get("window_sweeps", 5)))
+
+    def update(self, channels_this_sweep):
+        """Call once per sweep. Returns (confirmed, channels seen in window)."""
+        self.window.append(set(channels_this_sweep))
+        seen = set().union(*self.window)
+        need = int(self.sig.get("min_channels_in_window", 1))
+        return bool(channels_this_sweep) and len(seen) >= need, sorted(seen)
 
 
 def classify_cluster(cluster, band, signatures=()):
@@ -333,18 +371,19 @@ def classify_cluster(cluster, band, signatures=()):
          which ordinary WiFi also is; see the WiFi-channel penalty.
     """
     for sig in signatures:
-        if matches_signature(cluster, sig, band):
-            return f"Calibrated match: {sig['name']}", float(sig.get("confidence", 0.85)), "calibrated"
+        ch = matches_signature(cluster, sig, band)
+        if ch is not None:
+            return f"Calibrated: {sig['name']}", float(sig.get("confidence", 0.85)), "calibrated", sig, ch
 
     cf = cluster["crest_factor_db"]
     edge = cluster["edge_drop_db"]
     bw = cluster["bandwidth_mhz"]
     if cf >= 7.0 and edge >= 10.0 and bw >= ANALOG_MIN_BANDWIDTH_MHZ:
         conf = min(0.95, 0.5 + (cf - 7.0) / 20.0 + (edge - 10.0) / 40.0)
-        return "Analog Video Link (unverified - shape match only)", round(conf, 3), "shape"
+        return "Analog Video Link (unverified - shape match only)", round(conf, 3), "shape", None, None
     if cf < 5.0 and edge < 8.0 and 10.0 <= bw <= 40.0:
         conf = min(0.90, 0.5 + (5.0 - cf) / 20.0 + (8.0 - edge) / 40.0)
-        return "Digital Video Link (unverified - shape match only)", round(conf, 3), "shape"
+        return "Digital Video Link (unverified - shape match only)", round(conf, 3), "shape", None, None
     return None
 
 
@@ -375,7 +414,7 @@ def detections_for_band(result, signatures=(), modulation_analyzer=None):
         cls = classify_cluster(c, result["band"], signatures)
         if cls is None:
             continue
-        label, conf, method = cls
+        label, conf, method, sig, channel = cls
         wifi_ch = nearest_channel(c["center_mhz"], WIFI_CHANNELS_MHZ, WIFI_CHANNEL_TOLERANCE_MHZ)
         if wifi_ch is not None and method == "shape":
             conf = round(conf * 0.5, 3)
@@ -397,6 +436,8 @@ def detections_for_band(result, signatures=(), modulation_analyzer=None):
             "band": result["band"],
             "drone_type": label,
             "method": method,
+            "signature": sig["name"] if sig else None,
+            "channel_mhz": channel,
             "confidence": conf,
             "threat_level": "high" if conf > 0.8 else ("medium" if conf > 0.6 else "low"),
             "frequency_mhz": c["center_mhz"],
