@@ -309,6 +309,12 @@
         .drone-status-main .label { font-weight: 600; }
         .drone-status-main .meta { font-size: 0.85em; color: #aaa; margin-top: 3px; }
 
+        .raw-select, .raw-btn {
+            background: #1a1a2e; color: #e0e0e0; border: 1px solid #4facfe; border-radius: 6px;
+            padding: 3px 8px; margin-left: 6px; cursor: pointer;
+        }
+        .raw-btn.on { background: #4facfe; color: #000; }
+
         .threat-badge {
             display: inline-block;
             padding: 4px 8px;
@@ -466,6 +472,10 @@
                 <div class="nav-item" data-page="hardware">
                     <i class="fas fa-microchip"></i>
                     <span>Hardware</span>
+                </div>
+                <div class="nav-item" data-page="raw">
+                    <i class="fas fa-wave-square"></i>
+                    <span>Raw Data</span>
                 </div>
                 <div class="nav-item" data-page="analytics">
                     <i class="fas fa-chart-line"></i>
@@ -698,6 +708,83 @@
                     <div class="card-content">
                         <canvas id="analyticsChart" height="300"></canvas>
                     </div>
+                </div>
+            </div>
+
+            <!-- Raw HackRF data -->
+            <div id="rawPage" style="display: none;">
+                <div class="card" style="margin-bottom: 20px;">
+                    <div class="card-header">
+                        <h3><i class="fas fa-wave-square"></i> Raw HackRF Data</h3>
+                        <span>
+                            <select id="rawSensor" onchange="rawSelectSensor(this.value)" class="raw-select"></select>
+                            <span id="rawBandButtons"></span>
+                            <button id="rawPauseBtn" onclick="rawTogglePause()" class="raw-btn">Pause</button>
+                        </span>
+                    </div>
+                    <div class="card-content">
+                        <div id="rawSummary" style="font-size: 0.9em; color: #ccc; margin-bottom: 10px;">Waiting for data...</div>
+                        <div style="font-size: 0.85em; color: #aaa; margin-bottom: 6px;">
+                            <b>Waterfall</b> - newest sweep at the top, one row per sweep. Brighter = stronger above that hop's noise floor
+                            (dark blue = noise, yellow/red = +30-40 dB). A hopping drone link shows as bright dashes jumping around.
+                        </div>
+                        <canvas id="waterfall" width="1024" height="220" style="width: 100%; height: 220px; background: #000; border-radius: 6px; image-rendering: pixelated;"></canvas>
+                        <div id="waterfallAxis" style="display: flex; justify-content: space-between; font-size: 0.8em; color: #888; margin-top: 2px;"></div>
+                    </div>
+                </div>
+
+                <div class="dashboard-grid">
+                    <div class="card">
+                        <div class="card-header"><h3><i class="fas fa-signal"></i> I/Q samples</h3>
+                            <span id="iqInfo" style="font-size: 0.8em; color: #888;"></span></div>
+                        <div class="card-content">
+                            <div style="font-size: 0.85em; color: #aaa; margin-bottom: 6px;">
+                                The actual numbers coming off the HackRF: 256 consecutive samples (12.8 µs) from the hop with the
+                                strongest signal. I = in-phase, Q = quadrature, full scale is ±1.0.
+                            </div>
+                            <canvas id="iqChart" height="160"></canvas>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><h3><i class="fas fa-bullseye"></i> Constellation (I vs Q)</h3></div>
+                        <div class="card-content">
+                            <div style="font-size: 0.85em; color: #aaa; margin-bottom: 6px;">
+                                Noise = a round fuzzy blob near the centre. Points piling up at the square edge (±1) = ADC clipping:
+                                lower the gain (--lna / --vga).
+                            </div>
+                            <canvas id="constChart" height="160"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 20px;">
+                    <div class="card-header"><h3><i class="fas fa-list"></i> Every signal found this sweep (before any filtering)</h3></div>
+                    <div class="card-content"><div class="detections-table"><table>
+                        <thead><tr><th>Peak MHz</th><th>Centre MHz</th><th>Width MHz</th><th>Above noise</th><th>Crest</th><th>Edge drop</th><th>Shape rule says</th></tr></thead>
+                        <tbody id="rawClusters"></tbody></table></div>
+                        <div style="font-size: 0.8em; color: #888; margin-top: 6px;">Most of these are WiFi/Bluetooth. The dashboard only reports drones
+                            after the hopping, background and confidence checks - this table shows what those checks start from.</div>
+                    </div>
+                </div>
+
+                <div class="dashboard-grid" style="margin-top: 20px;">
+                    <div class="card">
+                        <div class="card-header"><h3><i class="fas fa-layer-group"></i> Hops (14 MHz slices)</h3></div>
+                        <div class="card-content"><div class="detections-table"><table>
+                            <thead><tr><th>Centre MHz</th><th>Noise floor</th><th>RMS</th><th>Clipping</th><th>Samples</th></tr></thead>
+                            <tbody id="rawHops"></tbody></table></div></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><h3><i class="fas fa-satellite"></i> 868 MHz packets (last capture)</h3></div>
+                        <div class="card-content"><div class="detections-table"><table>
+                            <thead><tr><th>MHz</th><th>Width kHz</th><th>Above noise</th><th>Length ms</th></tr></thead>
+                            <tbody id="rawPackets"><tr><td colspan="4">Select the 868MHz band</td></tr></tbody></table></div></div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: 20px;">
+                    <div class="card-header"><h3><i class="fas fa-code"></i> Raw report (JSON, long arrays shortened)</h3></div>
+                    <div class="card-content"><pre id="rawJson" style="max-height: 400px; overflow: auto; font-size: 0.75em; color: #9ad; white-space: pre-wrap;"></pre></div>
                 </div>
             </div>
 
@@ -1052,7 +1139,7 @@
         }
         
         function showPage(page) {
-            const pages = ['dashboard', 'map', 'detections', 'alerts', 'hardware', 'analytics', 'settings'];
+            const pages = ['dashboard', 'map', 'detections', 'alerts', 'hardware', 'raw', 'analytics', 'settings'];
             pages.forEach(p => {
                 const element = document.getElementById(p + 'Page');
                 if (element) element.style.display = 'none';
@@ -1075,6 +1162,9 @@
             }
             if (page === 'analytics') {
                 loadAnalytics();
+            }
+            if (page === 'raw') {
+                renderRaw(true);
             }
         }
         
@@ -1232,6 +1322,145 @@
             }
         }
 
+        // ---------------- Raw Data page ----------------
+        const RAW_HISTORY = 110;           // waterfall rows kept per sensor+band
+        let rawHistory = {};               // "sensor|band" -> [{t, power, noise}]
+        let rawSensor = null, rawBand = null, rawPaused = false;
+        let iqChart = null, constChart = null;
+
+        function rawRecord(sid, spec) {
+            Object.entries(spec.bands || {}).forEach(([band, b]) => {
+                const key = sid + '|' + band;
+                const h = rawHistory[key] = rawHistory[key] || [];
+                h.unshift({t: spec.timestamp, power: b.power_db, noise: b.noise_db});
+                if (h.length > RAW_HISTORY) h.pop();
+            });
+            if (!rawSensor) rawSensor = sid;
+            if (document.getElementById('rawPage').style.display !== 'none' && !rawPaused) renderRaw(false);
+        }
+
+        function rawSelectSensor(id) { rawSensor = id; renderRaw(true); }
+        function rawSelectBand(b) { rawBand = b; renderRaw(true); }
+        function rawTogglePause() {
+            rawPaused = !rawPaused;
+            const btn = document.getElementById('rawPauseBtn');
+            btn.innerText = rawPaused ? 'Resume' : 'Pause';
+            btn.classList.toggle('on', rawPaused);
+            if (!rawPaused) renderRaw(true);
+        }
+
+        function heat(v) {        // 0..1 -> dark blue .. cyan .. yellow .. red
+            const stops = [[0, 0, 40], [0, 90, 200], [0, 220, 220], [255, 230, 0], [255, 40, 0]];
+            const x = Math.max(0, Math.min(1, v)) * (stops.length - 1);
+            const i = Math.min(Math.floor(x), stops.length - 2), f = x - i;
+            return stops[i].map((c, k) => Math.round(c + (stops[i + 1][k] - c) * f));
+        }
+
+        function drawWaterfall(rows) {
+            const cv = document.getElementById('waterfall');
+            const ctx = cv.getContext('2d');
+            ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
+            if (!rows.length) return;
+            const w = rows[0].power.length, rowH = cv.height / RAW_HISTORY;
+            const img = ctx.createImageData(w, 1);
+            rows.forEach((r, y) => {
+                for (let x = 0; x < w; x++) {
+                    const [cr, cg, cb] = heat((r.power[x] - r.noise[x]) / 40);
+                    img.data.set([cr, cg, cb, 255], x * 4);
+                }
+                const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = 1;
+                tmp.getContext('2d').putImageData(img, 0, 0);
+                ctx.imageSmoothingEnabled = false;
+                ctx.drawImage(tmp, 0, Math.floor(y * rowH), cv.width, Math.ceil(rowH));
+            });
+        }
+
+        function ensureRawCharts() {
+            if (!window.Chart || iqChart) return;
+            const axis = {grid: {color: 'rgba(255,255,255,0.1)'}, ticks: {color: '#aaa'}};
+            iqChart = new Chart(document.getElementById('iqChart').getContext('2d'), {
+                type: 'line',
+                data: {labels: [], datasets: [
+                    {label: 'I', data: [], borderColor: '#4facfe', borderWidth: 1, pointRadius: 0},
+                    {label: 'Q', data: [], borderColor: '#ff9f43', borderWidth: 1, pointRadius: 0}]},
+                options: {animation: false, plugins: {legend: {labels: {color: '#e0e0e0'}}},
+                          scales: {x: {...axis, title: {display: true, text: 'time (µs)', color: '#e0e0e0'}, ticks: {color: '#aaa', maxTicksLimit: 8}},
+                                   y: {...axis, min: -1, max: 1}}}
+            });
+            constChart = new Chart(document.getElementById('constChart').getContext('2d'), {
+                type: 'scatter',
+                data: {datasets: [{label: 'samples', data: [], backgroundColor: 'rgba(79,172,254,0.6)', pointRadius: 2}]},
+                options: {animation: false, plugins: {legend: {display: false}},
+                          scales: {x: {...axis, min: -1, max: 1, title: {display: true, text: 'I', color: '#e0e0e0'}},
+                                   y: {...axis, min: -1, max: 1, title: {display: true, text: 'Q', color: '#e0e0e0'}}}}
+            });
+        }
+
+        function shorten(obj) {
+            return JSON.stringify(obj, (k, v) => Array.isArray(v) && v.length > 12 && typeof v[0] === 'number'
+                ? `[${v.slice(0, 6).join(', ')}, ... ${v.length} values]` : v, 2);
+        }
+
+        function renderRaw(full) {
+            const sensorsSeen = Object.keys(spectraBySensor);
+            const sel = document.getElementById('rawSensor');
+            if (full || sel.options.length !== sensorsSeen.length) {
+                sel.innerHTML = sensorsSeen.map(s => `<option value="${s}">${s}</option>`).join('');
+            }
+            if (!rawSensor || !spectraBySensor[rawSensor]) rawSensor = sensorsSeen[0];
+            if (!rawSensor) return;
+            sel.value = rawSensor;
+            const spec = spectraBySensor[rawSensor];
+            const bands = Object.keys(spec.bands || {});
+            if (!rawBand || !spec.bands[rawBand]) rawBand = bands[0];
+            document.getElementById('rawBandButtons').innerHTML = bands.map(b =>
+                `<button class="raw-btn ${b === rawBand ? 'on' : ''}" onclick="rawSelectBand('${b}')">${b}</button>`).join('');
+            const band = spec.bands[rawBand];
+            const raw = band.raw || {};
+
+            document.getElementById('rawSummary').innerHTML =
+                `<b>${rawSensor}</b> · ${rawBand} (${band.range_mhz[0]}–${band.range_mhz[1]} MHz) · sweep #${spec.scan_number}` +
+                ` took ${spec.sweep_seconds}s · noise floor ${band.noise_floor_db} dB · ${new Date(spec.timestamp).toLocaleTimeString()}` +
+                (band.background && band.background.learning ? ` · <span style="color:#ffb74d">learning background ${band.background.sweeps}/${band.background.learn_sweeps}</span>` : '');
+
+            drawWaterfall(rawHistory[rawSensor + '|' + rawBand] || []);
+            const r = band.range_mhz;
+            document.getElementById('waterfallAxis').innerHTML = [0, 0.25, 0.5, 0.75, 1].map(f =>
+                `<span>${(r[0] + (r[1] - r[0]) * f).toFixed(1)} MHz</span>`).join('');
+
+            ensureRawCharts();
+            const iq = raw.iq;
+            if (iq && iqChart) {
+                const us = 1e6 / iq.sample_rate_hz;
+                iqChart.data.labels = iq.i.map((_, k) => (k * us).toFixed(2));
+                iqChart.data.datasets[0].data = iq.i;
+                iqChart.data.datasets[1].data = iq.q;
+                iqChart.update('none');
+                constChart.data.datasets[0].data = iq.i.map((v, k) => ({x: v, y: iq.q[k]}));
+                constChart.update('none');
+            }
+            const hop = (raw.hops || []).find(h => iq && h.center_mhz === iq.center_mhz);
+            document.getElementById('iqInfo').innerText = iq
+                ? `tuned to ${iq.center_mhz} MHz${hop ? ` · RMS ${hop.rms} · clipping ${hop.clipping_pct}%` : ''}` : 'no I/Q in this report';
+
+            const cl = raw.clusters || [];
+            document.getElementById('rawClusters').innerHTML = cl.length ? cl.map(c => `
+                <tr><td>${c.peak_mhz}</td><td>${c.center_mhz}</td><td>${c.bandwidth_mhz}</td><td>+${c.above_noise_db} dB</td>
+                    <td>${c.crest_factor_db} dB</td><td>${c.edge_drop_db} dB</td><td>${c.classified_as || '-'}</td></tr>`).join('')
+                : '<tr><td colspan="7">No signals above the threshold in this band right now</td></tr>';
+
+            document.getElementById('rawHops').innerHTML = (raw.hops || []).map(h => `
+                <tr><td>${h.center_mhz}</td><td>${h.floor_db ?? '-'} dB</td><td>${h.rms}</td>
+                    <td style="color:${h.clipping_pct > 0.1 ? '#ff6b6b' : 'inherit'}">${h.clipping_pct}%</td><td>${h.samples}</td></tr>`).join('');
+
+            const pk = raw.packets;
+            document.getElementById('rawPackets').innerHTML = !pk ? '<tr><td colspan="4">Select the 868MHz band</td></tr>'
+                : pk.length ? pk.map(p => `<tr><td>${p.frequency_mhz}</td><td>${p.bandwidth_khz}</td><td>+${p.above_noise_db} dB</td><td>${p.duration_ms}</td></tr>`).join('')
+                : '<tr><td colspan="4">No packets in the last 868MHz capture</td></tr>';
+
+            document.getElementById('rawJson').textContent = shorten({sensor: rawSensor, band: rawBand, ...band});
+        }
+
         function selectSpectrumSensor(id) {
             selectedSpectrumSensor = id;
             if (spectraBySensor[id]) updateSpectrum(spectraBySensor[id]);
@@ -1240,6 +1469,7 @@
         function updateSpectrum(spec) {
             const sid = spec.sensor_id || 'local';
             spectraBySensor[sid] = spec;
+            rawRecord(sid, spec);
             if (!selectedSpectrumSensor) selectedSpectrumSensor = sid;
             if (sid !== selectedSpectrumSensor) return;
             lastSpectrumAt = Date.now();

@@ -142,6 +142,7 @@ class DetectorPipeline:
             result = rf.sweep_band(self.receiver, band)
             spectra[band] = rf.spectrum_summary(result)
             dets, clusters = rf.detections_for_band(result, self.signatures, self.analyzer)
+            spectra[band]["raw"] = rf.raw_view(result, clusters)
             found.extend(fuse_band(band, dets, clusters, st, self.signatures))
             spectra[band]["background"] = {
                 "learning": st.learning,
@@ -169,9 +170,10 @@ class DetectorPipeline:
         center = (lo + hi) // 2
         samples = self.receiver.capture(center, control_link.CONTROL_SAMPLES)
         f, db = rf.hop_spectrum(samples, center)
-        result = rf.build_band_result(band, [f], [db], [float(np.percentile(db, 20))], [])
+        result = rf.build_band_result(band, [f], [db], [float(np.percentile(db, 20))], [(center, samples)])
         summary = rf.spectrum_summary(result)
         packets = control_link.find_packets(samples, center)
+        summary["raw"] = rf.raw_view(result, [], {"packets": packets[:60]})
         link = st.control.update(packets)
         st.background.sweeps += 1          # 868MHz learning period just counts sweeps
         summary["background"] = {"learning": st.learning, "sweeps": min(st.background.sweeps, st.learn_sweeps),

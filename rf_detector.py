@@ -267,6 +267,46 @@ def sweep_band(receiver, band):
     return build_band_result(band, freqs, dbs, floors, hops)
 
 
+RAW_IQ_POINTS = 256
+
+
+def raw_view(result, clusters, extra=None):
+    """What the dashboard's Raw Data page shows for one band: every signal
+    found (before any filtering), each hop's noise floor and ADC health,
+    and a short slice of actual I/Q samples from the busiest hop."""
+    hops = []
+    for center, samples in result.get("hops", []):
+        mag = np.abs(np.concatenate([samples.real, samples.imag]))
+        hops.append({
+            "center_mhz": round(center / 1e6, 3),
+            "samples": int(len(samples)),
+            "rms": round(float(np.sqrt(np.mean(np.abs(samples) ** 2))), 4),
+            # 8-bit ADC full scale is +/-1.0 here; lots of samples at the
+            # rail means the gain is too high (overload -> fake signals).
+            "clipping_pct": round(100.0 * float(np.mean(mag >= 0.99)), 3),
+        })
+    floors = result.get("hop_floors", [])
+    for h, fl in zip(hops, floors):
+        h["floor_db"] = round(fl, 1)
+
+    iq = None
+    if result.get("hops"):
+        if clusters:
+            target = max(clusters, key=lambda c: c["above_noise_db"])["peak_mhz"] * 1e6
+            center, samples = min(result["hops"], key=lambda h: abs(h[0] - target))
+        else:
+            center, samples = result["hops"][len(result["hops"]) // 2]
+        mid = len(samples) // 2
+        seg = samples[mid:mid + RAW_IQ_POINTS]
+        iq = {"center_mhz": round(center / 1e6, 3), "sample_rate_hz": SAMPLE_RATE_HZ,
+              "i": [round(float(v), 4) for v in seg.real], "q": [round(float(v), 4) for v in seg.imag]}
+
+    out = {"clusters": sorted(clusters, key=lambda c: -c["above_noise_db"])[:25], "hops": hops, "iq": iq}
+    if extra:
+        out.update(extra)
+    return out
+
+
 def build_band_result(band, freqs, dbs, floors, hops):
     # Per-hop noise floor (20th percentile - robust to a signal filling
     # most of a hop), clamped to the band-wide floor + 3dB so a hop that's
@@ -281,6 +321,7 @@ def build_band_result(band, freqs, dbs, floors, hops):
     inside = (f >= lo_hz) & (f < hi_hz)
     return {
         "band": band,
+        "hop_floors": floors,
         "freqs_hz": f[inside],
         "power_db": db[inside],
         "noise_db": nf[inside],
@@ -583,6 +624,7 @@ def detections_for_band(result, signatures=(), modulation_analyzer=None):
         if cls is None:
             continue
         label, conf, method, sig, channel = cls
+        c["classified_as"] = label
         wifi_ch = nearest_channel(c["center_mhz"], WIFI_CHANNELS_MHZ, WIFI_CHANNEL_TOLERANCE_MHZ)
         if wifi_ch is not None and method == "shape":
             conf = round(conf * 0.5, 3)
