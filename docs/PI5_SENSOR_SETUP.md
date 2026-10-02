@@ -1,9 +1,10 @@
-# Raspberry Pi 5 sensor setup (drone-detector)
+# Raspberry Pi 5 sensor setup (drone-detector) — Mac, headless, 4 Plutos
 
-A step-by-step build for one Pi 5 running as a drone-detection sensor with a
-Pluto SDR, following the same conventions as the Revector SNS build but pointed
-at **this** system's code (`sensor_node.py` reporting to
-`drone_dashboard_backend.py`).
+A step-by-step build for a Raspberry Pi 5 running as a drone-detection sensor
+with **four Pluto (Pluto Sky) SDRs**, set up **headless from a Mac over Wi-Fi**
+(no monitor, no keyboard, nothing plugged into the Mac). It follows the lab's
+network conventions but points at **this** system's code (`sensor_node.py`
+reporting to `drone_dashboard_backend.py`).
 
 This Pi uses:
 
@@ -12,68 +13,178 @@ This Pi uses:
 | Hostname | `revector` |
 | Username | `revector` |
 | Password | `R3v3ct0r` |
-| Pi static IP (Ethernet) | `10.70.0.11/24` |
+| Pi static IP (Ethernet, for the deployed lab LAN) | `10.70.0.11/24` |
 | Gateway / router | `10.70.0.1` |
-| Host laptop (runs the dashboard) | `10.70.0.2` |
+| Host (laptop running the dashboard) | `10.70.0.2` |
 | DNS | `10.70.0.1`, `8.8.8.8` |
-| Internet | over Wi-Fi (`wlan0`); lab traffic over Ethernet (`eth0`) |
+| Internet / setup / early testing | over Wi-Fi (`wlan0`) |
 
-> The host (your laptop) runs `drone_dashboard_backend.py`. The Pi runs
-> `sensor_node.py` and reports to the host over HTTP on port **8000**. Unlike
-> the old SNS build there is no per-Pi WebSocket port to line up — every sensor
-> just POSTs to `http://10.70.0.2:8000`.
+> **Two phases.** For **bring-up and testing now**, everything runs over
+> **Wi-Fi** — the Pi and your Mac just need to be on the same Wi-Fi, and nothing
+> is plugged into the Mac. The `10.70.0.x` **wired** LAN (steps 7–8) is only for
+> the real multi-sensor deployment later.
+
+> **Four Plutos = four bands.** With one Pi you get the best result by giving
+> each Pluto one band (868, 2.4, 5.2, 5.8). Every band is then watched
+> continuously instead of in turn, which removes the duty-cycle gap. (Spreading
+> Plutos across different *locations* for positioning comes later, when you have
+> more than one Pi.)
 
 ---
 
-## 1. Flash the SD card (on your laptop)
+## 1. Flash the SD card (in Raspberry Pi Imager on your Mac)
 
 Use a **fresh** SD card. Keep the old 4-Pluto card untouched as a backup.
 
 1. Install **Raspberry Pi Imager** (raspberrypi.com/software).
 2. Choose:
    - Device: **Raspberry Pi 5**
-   - OS: **Raspberry Pi OS Lite (64-bit)** — no desktop; it's a headless sensor, and 64-bit is needed by the SDR libraries.
+   - OS: **Raspberry Pi OS Lite (64-bit)** — headless, and 64-bit is required by the SDR libraries.
    - Storage: your SD card.
-3. Click **Edit Settings** (the gear) **before** writing:
+3. Click **Edit Settings** (the gear) **before** writing, and set:
    - **Hostname:** `revector`
    - **Enable SSH** → "Use password authentication"
    - **Username:** `revector`  **Password:** `R3v3ct0r`
-   - **Configure wireless LAN:** your Wi-Fi name + password, and set the correct **Wi-Fi country**. This gives the Pi internet on first boot to install packages.
+   - **Configure wireless LAN:** your Wi-Fi name + password, and the correct **Wi-Fi country**. (This is what lets the Pi boot straight onto your Wi-Fi with SSH on — no monitor needed.)
    - **Locale:** your timezone/keyboard.
 4. Write the card.
 
 ---
 
-## 2. First boot on a monitor (one time)
+## 2. Boot headless and SSH in from your Mac
 
-Do the first boot with a Micro-HDMI monitor and USB keyboard attached, **not**
-over SSH. You're about to change networking, and if you get it wrong over SSH
-you'd lock yourself out — on a local screen you can always fix it.
-
-Log in as `revector` / `R3v3ct0r`, then update:
+- Put the card in the Pi, plug in **power** (USB-C) and the **four Plutos** (a powered USB hub is wise — four Plutos draw real current). Nothing goes to the Mac.
+- Power on and wait ~90 seconds for first boot.
+- On your Mac, open **Terminal** and connect:
 
 ```bash
-sudo apt update
-sudo apt upgrade -y
+ssh revector@revector.local
+```
+
+Type `yes` to the fingerprint prompt, then the password `R3v3ct0r`.
+(`.local` works natively on macOS. If it doesn't resolve, find the Pi's Wi-Fi
+IP with `ping revector.local` or `arp -a | grep -i dc:a6:32`, then
+`ssh revector@<that-ip>`.)
+
+> You don't need PuTTY or WinSCP — those were for the Windows SNS host. macOS
+> has `ssh` and `scp` built in.
+
+Update the Pi:
+
+```bash
+sudo apt update && sudo apt upgrade -y
 sudo reboot
+```
+
+Wait ~60 s and `ssh revector@revector.local` back in.
+
+---
+
+## 3. Install the tools and Pluto drivers
+
+```bash
+sudo apt install -y git python3-numpy libiio-utils python3-libiio
+pip install pyadi-iio --break-system-packages
 ```
 
 ---
 
-## 3. Give the Pi a fixed Ethernet address
+## 4. Find the four Plutos
 
-Install the networking tools:
+With all four plugged in:
 
 ```bash
-sudo apt install -y git python3-numpy
+iio_info -s
 ```
 
-Raspberry Pi OS (Bookworm) uses **NetworkManager**, so set the static address
-with `nmcli` (this is the modern replacement for editing `dhcpcd.conf`):
+You should see **four** entries. Addressed over USB they look like:
+
+```
+    0: 0456:b673 (Analog Devices Inc. PlutoSDR) [usb:1.2.5]
+    1: 0456:b673 (Analog Devices Inc. PlutoSDR) [usb:1.3.5]
+    2: 0456:b673 (Analog Devices Inc. PlutoSDR) [usb:1.4.5]
+    3: 0456:b673 (Analog Devices Inc. PlutoSDR) [usb:1.5.5]
+```
+
+**Write down the four `usb:...` strings.** These are what you pass to
+`--pluto-uri`.
+
+> **Why `usb:` and not `ip:`?** Every Pluto defaults to `ip:192.168.2.1`, so
+> four of them on one Pi would all claim the same address and clash. The
+> `usb:...` id is unique per physical port and needs no per-Pluto
+> reconfiguration — much simpler with four on one Pi.
+
+If you see fewer than four: try a powered USB hub and the Pi 5's USB-3 ports,
+and check `lsusb | grep -i 0456` lists four `Analog Devices` devices.
+
+> **5.8 GHz:** each Pluto that will cover 5.2/5.8 GHz must be unlocked to tune
+> that high (the AD9364 change). Your old 4-Pluto rig almost certainly did this
+> already, and it lives on the Pluto, not the SD card, so it carries over.
+
+---
+
+## 5. Copy the sensor code onto the Pi
+
+The Pi needs **five** files (plus `drone_signatures.json` only if you
+calibrated). Run this **on your Mac**, from inside your drone-detector folder:
 
 ```bash
-# find the wired connection name (usually "Wired connection 1")
-nmcli connection show
+ssh revector@revector.local mkdir -p drone-detector
+scp rf_detector.py detector_pipeline.py control_link.py site_baseline.py sensor_node.py \
+    revector@revector.local:drone-detector/
+```
+
+---
+
+## 6. Run — one process per Pluto, one band each
+
+**On your Mac**, start the dashboard and find your Mac's Wi-Fi IP:
+
+```bash
+python drone_dashboard_backend.py        # leave this running
+ipconfig getifaddr en0                    # your Mac's Wi-Fi IP, e.g. 192.168.1.50
+```
+
+Open `http://localhost:8000` on the Mac.
+
+**On the Pi** (over SSH), start four sensors — swap in the four `usb:...` ids
+from step 4 and your Mac's IP. Run each in its own `tmux` window or background
+them with `&`:
+
+```bash
+cd drone-detector
+MAC=192.168.1.50          # <-- your Mac's Wi-Fi IP
+
+python3 sensor_node.py --id revector-11-868 --sdr pluto --pluto-uri usb:1.2.5 \
+        --bands 868 --server http://$MAC:8000 &
+python3 sensor_node.py --id revector-11-24  --sdr pluto --pluto-uri usb:1.3.5 \
+        --bands 2.4 --server http://$MAC:8000 &
+python3 sensor_node.py --id revector-11-52  --sdr pluto --pluto-uri usb:1.4.5 \
+        --bands 5.2 --server http://$MAC:8000 &
+python3 sensor_node.py --id revector-11-58  --sdr pluto --pluto-uri usb:1.5.5 \
+        --bands 5.8 --server http://$MAC:8000 &
+```
+
+- Each `--id` must be unique; the suffix says which band that Pluto covers.
+- **Keep drones off** for the first ~30 s while each learns its background, then while the 10-minute site baseline builds (detection still runs during the baseline — the **System status** card shows progress for all four).
+- Within a few seconds all four should appear on the dashboard's System status card.
+
+Set the location by clicking the map on the dashboard (or add `--lat`/`--lon`).
+For four Plutos at the **same** spot, give them the same position.
+
+---
+
+## 7. (Deployment only) Fixed wired IP on the lab LAN
+
+Do this **only** when you move to the wired `10.70.0.x` network. Because it
+changes `eth0` while you're connected over Wi-Fi (`wlan0`), it won't drop your
+SSH session.
+
+Raspberry Pi OS (Bookworm) uses **NetworkManager**, so use `nmcli` (not
+`dhcpcd.conf`):
+
+```bash
+nmcli connection show                    # find the wired name, usually "Wired connection 1"
 
 sudo nmcli connection modify "Wired connection 1" \
   ipv4.method manual \
@@ -82,178 +193,60 @@ sudo nmcli connection modify "Wired connection 1" \
   ipv4.dns "10.70.0.1 8.8.8.8" \
   ipv4.route-metric 200
 
-# keep Wi-Fi as the preferred route for internet (lower metric wins)
+# keep Wi-Fi as the preferred internet route (lower metric wins)
 sudo nmcli connection modify preconfigured ipv4.route-metric 100 2>/dev/null || true
 
 sudo nmcli connection up "Wired connection 1"
 ```
 
-> **Why the route-metric lines:** pinning a static IP on Ethernet can steal the
-> default route and break the Pi's Wi-Fi internet (which you need for
-> installing packages). Giving Wi-Fi the lower metric (100) and Ethernet the
-> higher (200) means internet goes over Wi-Fi while lab traffic to
-> `10.70.0.x` goes over Ethernet. This is the same problem the SNS "Wi-Fi & IP
-> Manager" existed to fix.
-
-Check it:
+Check:
 
 ```bash
-ip addr show eth0      # inet should be 10.70.0.11/24
-ip route               # default route should be via wlan0
-ping -c2 8.8.8.8       # internet still works (over Wi-Fi)
+ip addr show eth0      # inet 10.70.0.11/24
+ip route               # default route via wlan0 (internet over Wi-Fi)
 ```
+
+> **Why the metrics:** pinning a static Ethernet IP can steal the default route
+> and kill Wi-Fi internet. Giving Wi-Fi the lower metric (100) keeps internet on
+> `wlan0` while lab traffic to `10.70.0.x` goes over `eth0`. This is the trap the
+> old "Wi-Fi & IP Manager" existed to fix.
+
+On the wired LAN, point the sensors at the host at `10.70.0.2` instead of your
+Mac's Wi-Fi IP (`--server http://10.70.0.2:8000`).
 
 ---
 
-## 4. Wireless connection
+## 8. Match levels between sensors (for positioning, later)
 
-If you set Wi-Fi in the Imager it's already up. To add or change it later:
+Positioning and the **Power by Sensor** page compare levels **between
+locations on the same band**, so when you have more than one Pi, each must read
+the same drone at the same distance as the same level.
 
-```bash
-sudo nmcli device wifi list
-sudo nmcli device wifi connect "YOUR_SSID" password "YOUR_WIFI_PASSWORD"
-```
+1. Put the transmitting drone ~5 m from Pi A; note its level on the **Power by Sensor** page.
+2. Move it ~5 m from Pi B, same height/orientation; note the level.
+3. If B reads 4 dB lower, start B's sensors with `--level-offset-db 4`.
 
-Confirm both links are up at once:
-
-```bash
-nmcli -t -f DEVICE,STATE,CONNECTION device   # eth0 and wlan0 both "connected"
-```
-
-Keep the Pi's own Wi-Fi radio **on** here — unlike the RNR/DND sensors, a
-passive SDR on a separate antenna isn't polluted by the Pi's Wi-Fi, and you
-want it for internet and for SSH when Ethernet isn't cabled.
+Use the same gain and antenna type everywhere to keep this small.
 
 ---
 
-## 5. Install the Pluto drivers
+## 9. Run headless on boot (optional)
+
+To auto-start all four on boot, create one systemd service per Pluto, e.g. for
+the 2.4 GHz one:
 
 ```bash
-sudo apt install -y libiio-utils python3-libiio
-pip install pyadi-iio --break-system-packages
-```
-
-Plug **one** Pluto into the Pi over USB (start with one; add the rest later).
-Then check the Pi can see it:
-
-```bash
-iio_info -s
-```
-
-You should see a line like `usb:1.5.5` or `ip:192.168.2.1`. **Note that
-address** — it's your `--pluto-uri`.
-
-> **5.8 GHz:** the Pluto must be unlocked to tune 5.8 GHz (the AD9364 firmware
-> change). Your old 4-Pluto setup almost certainly did this already, and it
-> lives on the Pluto, not the SD card, so it carries over. If the Pi later
-> says it can't tune 5.8 GHz, that unlock is missing.
-
----
-
-## 6. Copy the sensor code onto the Pi
-
-The Pi needs **five** files from your drone-detector project (plus
-`drone_signatures.json` only if you calibrated). Run this **on your laptop**,
-from inside the project folder:
-
-```bash
-ssh revector@10.70.0.11 mkdir -p drone-detector
-scp rf_detector.py detector_pipeline.py control_link.py site_baseline.py sensor_node.py \
-    revector@10.70.0.11:drone-detector/
-```
-
-(If you SSH in for the first time it asks to confirm the fingerprint — type
-`yes`, then the password `R3v3ct0r`.)
-
-> You can also `git clone` the branch onto the Pi instead of copying files, if
-> the Pi has access to your repo.
-
----
-
-## 7. Run it
-
-**On the laptop (the host)** — start the dashboard, and give the host its own
-matching static address on the lab LAN (`10.70.0.2/24`, mask `255.255.255.0`)
-on its Ethernet adapter:
-
-```bash
-python drone_dashboard_backend.py
-```
-
-Open `http://10.70.0.2:8000` in a browser.
-
-**On the Pi** — over SSH:
-
-```bash
-ssh revector@10.70.0.11
-cd drone-detector
-python3 sensor_node.py --id revector-11 --sdr pluto --pluto-uri ip:192.168.2.1 \
-                       --pluto-gain 40 --server http://10.70.0.2:8000 \
-                       --lat <your latitude> --lon <your longitude>
-```
-
-- Use the `--pluto-uri` address from step 5.
-- `--id` must be unique per sensor. Keep it aligned to the unit number, e.g. `revector-11` for `10.70.0.11`.
-- Position: from a phone GPS app at the antenna, or leave `--lat/--lon` off and click the sensor's spot on the dashboard map.
-- **Keep drones off** for the first ~30 s while it learns the background, then while it builds the 10-minute site baseline (detection still runs during the baseline — the System status card shows progress).
-
-Within a few seconds `revector-11` should appear on the dashboard's **System
-status** card.
-
----
-
-## 8. Several Plutos on one Pi
-
-Run one `sensor_node.py` per Pluto, each with its own `--id` and `--pluto-uri`:
-
-```bash
-python3 sensor_node.py --id revector-11a --sdr pluto --pluto-uri ip:192.168.2.1 --server http://10.70.0.2:8000
-python3 sensor_node.py --id revector-11b --sdr pluto --pluto-uri ip:192.168.3.1 --server http://10.70.0.2:8000
-```
-
-Each extra Pluto needs its own IP (set in its `config.txt`) or its own `usb:`
-URI from `iio_info -s`. On a Pi 5 run each in its own terminal (or `tmux`
-window, or a systemd service — see below).
-
-> **Splitting bands for full coverage:** instead of every Pluto sweeping every
-> band, you can dedicate each to a band with `--bands`, e.g. one on `2.4` and
-> one on `5.8`. Each band then gets continuous coverage, which is the real
-> answer to the duty-cycle concern.
-
----
-
-## 9. Match levels between sensors (for positioning)
-
-Positioning and the **Power by Sensor** page compare signal levels between
-sensors, so two sensors must read the same drone at the same distance as the
-same level. Detection doesn't care, but positioning does.
-
-1. Put the transmitting drone ~5 m from sensor A; note its level on the **Power by Sensor** page.
-2. Move it ~5 m from sensor B, same height and orientation; note the level.
-3. If B reads, say, 4 dB lower, start B with `--level-offset-db 4`.
-
-Use the same gains and antenna type on every sensor to keep this small.
-
----
-
-## 10. Run headless on boot (optional)
-
-To make the sensor start automatically and restart if it dies, create a
-systemd service on the Pi:
-
-```bash
-sudo tee /etc/systemd/system/drone-sensor.service >/dev/null <<'EOF'
+sudo tee /etc/systemd/system/drone-24.service >/dev/null <<'EOF'
 [Unit]
-Description=Drone detector sensor
+Description=Drone sensor 2.4GHz
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 User=revector
 WorkingDirectory=/home/revector/drone-detector
-ExecStart=/usr/bin/python3 sensor_node.py --id revector-11 --sdr pluto \
-          --pluto-uri ip:192.168.2.1 --pluto-gain 40 \
-          --server http://10.70.0.2:8000
+ExecStart=/usr/bin/python3 sensor_node.py --id revector-11-24 --sdr pluto \
+          --pluto-uri usb:1.3.5 --bands 2.4 --server http://10.70.0.2:8000
 Restart=always
 RestartSec=5
 
@@ -262,22 +255,23 @@ WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now drone-sensor
-systemctl status drone-sensor          # check it's running
-journalctl -u drone-sensor -f          # watch its output
+sudo systemctl enable --now drone-24
+journalctl -u drone-24 -f        # watch it
 ```
+
+Repeat for `drone-868`, `drone-52`, `drone-58` with their own `usb:` ids and
+`--bands`.
+
+> `usb:` ids can change if you move a Pluto to a different port. If that becomes
+> a nuisance for the boot services, give each Pluto a distinct static IP in its
+> own `config.txt` and use `ip:` URIs instead.
 
 ---
 
 ## Troubleshooting
 
-- **Sensor not on the dashboard:** check the Pi can reach the host —
-  `ping 10.70.0.2` and `curl http://10.70.0.2:8000/api/sensors`. If ping works
-  but curl doesn't, the laptop's firewall is blocking port 8000.
-- **Lost internet after the static IP:** the Ethernet route stole the default
-  route. Re-check the route metrics in step 3 (`ip route` — default should be
-  via `wlan0`).
-- **`iio_info -s` shows nothing:** the Pluto isn't enumerating. Try a different
-  USB cable/port (use the Pi 5's USB 3 ports), and `lsusb` should list
-  `Analog Devices` (`0456:b673`/`b674`).
-- **Can't tune 5.8 GHz:** the Pluto's AD9364 unlock is missing (see step 5).
+- **Can't SSH to `revector.local`:** the Pi may not have joined Wi-Fi (wrong password or country in the Imager). Re-flash and double-check those, or find its IP with `arp -a | grep -i dc:a6:32`.
+- **Fewer than 4 Plutos in `iio_info -s`:** power — use a powered USB hub and the Pi 5's USB-3 ports. `lsusb | grep -i 0456` should list four.
+- **A sensor not on the dashboard:** from the Pi, `curl http://$MAC:8000/api/sensors`. If that fails, the Mac's firewall is blocking port 8000 (System Settings → Network → Firewall).
+- **Can't tune 5.2/5.8 GHz:** that Pluto's AD9364 unlock is missing (step 4 note).
+- **One Pluto wedges under load:** Pluto Sky's own watchdog handles USB drops; if a `sensor_node` process dies, the systemd service in step 9 restarts it.
