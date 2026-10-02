@@ -66,3 +66,4 @@ __pycache__/
 *.db-wal
 *.db-shm
 calibration/
+sensors.json

@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 """
-drone_dashboard_backend.py - backend for ui/dashboard.html, fed by real
-HackRF data.
+drone_dashboard_backend.py - the central server + dashboard.
 
-Every sweep hops the HackRF across the whole 2.4GHz band (2400-2485MHz)
-and the 5.8GHz FPV band (5645-5925MHz), 14MHz at a time, and looks for
-signals shaped like drone video links - see rf_detector.py for exactly
-how. If you've run calibrate_detector.py with your own drone, the
-signatures it learned (drone_signatures.json) are matched first.
+Any number of SENSORS (a HackRF on a Raspberry Pi running sensor_node.py,
+or a HackRF plugged into this machine) report to it. Each report has the
+sensor's position, its live spectrum (power per frequency) and what it
+detected. The server:
 
-It does NOT identify drone models, and shape matches are labelled
-"unverified": an analog video sender or WiFi can have the same shape.
+  * merges the same drone seen by several sensors into one track,
+    ACTIVE while it keeps being seen, GONE ~12s after it goes quiet
+  * keeps each sensor's signal level for every drone, so it knows which
+    sensor is NEAREST (loudest) and can estimate a rough position from
+    the relative levels (see localization.py for how, and its limits)
+  * pushes everything live to ui/dashboard.html
 
 Usage:
-    python3 drone_dashboard_backend.py              # both bands
-    python3 drone_dashboard_backend.py --bands 2.4  # just one band
-Then open http://localhost:8000 in a browser.
+    # Single machine with a HackRF plugged in (it is the "local" sensor):
+    python3 drone_dashboard_backend.py
+    # Central server only, sensors are Raspberry Pis running sensor_node.py:
+    python3 drone_dashboard_backend.py --no-local-sensor
+Then open http://localhost:8000 (or http://<server-ip>:8000).
 """
 import argparse
 import asyncio
@@ -28,44 +32,58 @@ from collections import deque
 
 import uvicorn
 import websockets
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+import localization
 import rf_detector as rf
-
-# Optional: the domain/algorithms modulation classifier. Corroborating
-# info only - never required, never a vote for "this is a drone".
-try:
-    from domain.algorithms import create_spectrum_analyzer
-    MODULATION_ANALYSIS_AVAILABLE = True
-except ImportError:
-    MODULATION_ANALYSIS_AVAILABLE = False
 
 # ======================== Configuration ======================== #
 
-SWEEP_BANDS = list(rf.BANDS)       # overridden by --bands
-SWEEP_PAUSE_S = 0.2                # rest between full sweeps
-# Sweeps spent learning the normal background (WiFi etc.) at startup,
-# before calibration-free hopping detection switches on. Keep drones
-# OFF for this (~25s with both bands). Overridden by --learn-sweeps.
-LEARN_SWEEPS = 20
+# A drone is ACTIVE while some sensor keeps seeing it; GONE once no sensor
+# has for this long (a real drone recording never went more than one
+# sweep without a match). A sighting after that starts a new track.
+TRACK_TIMEOUT_S = 12.0
+# A sensor is "online" if it reported within this long.
+SENSOR_STALE_S = 15.0
+# Per-sensor levels used for positioning: median of the last few reports
+# within this window, which smooths the sweep-to-sweep wobble.
+LEVEL_WINDOW_S = 4.0
+LEVEL_HISTORY = 3
 
-# The dashboard shows "HackRF connected" only if a sweep actually
-# finished recently - not just because the script is running.
-STALE_AFTER_S = 10.0
-
-receiver = None
-signatures = []
+SENSORS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sensors.json")
 
 # ======================== Shared state ======================== #
 
-detections = deque(maxlen=200)
+lock = threading.RLock()
+detections = deque(maxlen=200)   # tracks, newest first
 alerts = deque(maxlen=100)
+sensors = {}                     # sensor_id -> info dict
+spectra = {}                     # sensor_id -> latest spectrum message
 start_time = time.time()
-latest_spectrum = None
-scan_stats = {"scans_ok": 0, "scans_failed": 0, "last_ok": 0.0, "last_error": None, "sweep_seconds": None}
+
+
+def load_sensor_locations():
+    try:
+        with open(SENSORS_FILE) as fh:
+            return json.load(fh)
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        print(f"Couldn't read {SENSORS_FILE}: {e}")
+        return {}
+
+
+saved_locations = load_sensor_locations()
+
+
+def save_sensor_location(sensor_id, lat, lon):
+    saved_locations[sensor_id] = {"lat": lat, "lon": lon}
+    with open(SENSORS_FILE, "w") as fh:
+        json.dump(saved_locations, fh, indent=2)
+
 
 # ======================== WebSocket push (own thread, own event loop) ======================== #
 
@@ -107,37 +125,44 @@ def run_ws_server():
     ws_loop.run_until_complete(main())
 
 
-def current_metrics():
-    now = time.time()
-    active = [d for d in detections if is_active(d, now)]
+# ======================== Sensors ======================== #
+
+def sensor_public(s, now=None):
+    now = now or time.time()
     return {
-        "total_detections": len(detections),
-        "active_threats": sum(1 for d in active if d["threat_level"] == "high"),
-        "active_drones": len(active),
-        # Live value for the confidence chart: strongest active track, 0 if none.
-        "current_confidence": max((d["confidence"] for d in active), default=0.0),
-        "avg_confidence": round(sum(d["confidence"] for d in detections) / len(detections), 3) if detections else 0,
-        "system_uptime": now - start_time,
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "sensor_id": s["sensor_id"],
+        "lat": s.get("lat"),
+        "lon": s.get("lon"),
+        "online": (now - s["last_report"]) < SENSOR_STALE_S,
+        "last_report_ago_s": int(now - s["last_report"]),
+        "sweeps": s.get("sweeps", 0),
+        "sweep_seconds": s.get("sweep_seconds"),
+        "learning": s.get("learning", False),
+        "bands": s.get("bands", []),
+        "last_error": s.get("last_error"),
+        "reports": s.get("reports", 0),
     }
 
 
-# ======================== HackRF scanning loop (own thread) ======================== #
+def all_sensors():
+    now = time.time()
+    return [sensor_public(s, now) for s in sorted(sensors.values(), key=lambda s: s["sensor_id"])]
 
-# A drone is a "track": ACTIVE while it keeps being seen, GONE once it
-# hasn't been seen for TRACK_TIMEOUT_S (~10 sweeps with both bands - a
-# real drone recording never went more than one sweep without a match).
-# A sighting after it's gone starts a new track.
-TRACK_TIMEOUT_S = 12.0
 
+def sensor_position(sensor_id):
+    s = sensors.get(sensor_id, {})
+    return s.get("lat"), s.get("lon")
+
+
+# ======================== Tracks ======================== #
 
 def is_active(d, now=None):
     return ((now or time.time()) - d["_last_seen"]) <= TRACK_TIMEOUT_S
 
 
-def record_detection(det):
-    """Merge into the matching ACTIVE track, or start a new one. Returns
-    True if this is a new track."""
+def record_detection(det, sensor_id):
+    """Merge into the matching ACTIVE track (from any sensor), or start a
+    new one. Returns the track and whether it is new."""
     now = time.time()
     for d in detections:
         if not is_active(d, now):
@@ -153,11 +178,12 @@ def record_detection(det):
             d["last_seen"] = time.strftime("%Y-%m-%dT%H:%M:%S")
             d["confidence"] = max(d["confidence"], det["confidence"])
             d["threat_level"] = rf.threat_level(d["confidence"])
-            for k in ("frequency_mhz", "power_db", "above_noise_db", "bandwidth_mhz", "estimated_distance_m"):
+            for k in ("frequency_mhz", "power_db", "above_noise_db", "bandwidth_mhz"):
                 d[k] = det[k]
             if det.get("channels_seen"):
                 d["channels_seen"] = det["channels_seen"]
-            return False
+            add_level(d, sensor_id, det, now)
+            return d, False
     det.update({
         "id": str(uuid.uuid4())[:8],
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -165,9 +191,53 @@ def record_detection(det):
         "hits": 1,
         "_first_seen": now,
         "_last_seen": now,
+        "_levels": {},
     })
+    add_level(det, sensor_id, det, now)
     detections.appendleft(det)
-    return True
+    return det, True
+
+
+def add_level(track, sensor_id, det, now):
+    hist = track["_levels"].setdefault(sensor_id, deque(maxlen=LEVEL_HISTORY))
+    hist.append((now, det["above_noise_db"], det.get("estimated_distance_m")))
+
+
+def sensor_levels(track, now):
+    """Each sensor's recent level for this track (median of recent reports)."""
+    out = []
+    for sid, hist in track["_levels"].items():
+        recent = [h for h in hist if now - h[0] <= LEVEL_WINDOW_S]
+        if not recent:
+            continue
+        levels = sorted(h[1] for h in recent)
+        lat, lon = sensor_position(sid)
+        out.append({
+            "sensor_id": sid,
+            "level_db": round(levels[len(levels) // 2], 1),
+            "estimated_distance_m": recent[-1][2],
+            "lat": lat, "lon": lon,
+            "seen_ago_s": int(now - recent[-1][0]),
+        })
+    out.sort(key=lambda r: -r["level_db"])
+    return out
+
+
+def public(det):
+    now = time.time()
+    out = {k: v for k, v in det.items() if not k.startswith("_") and k != "track_key"}
+    out["status"] = "active" if is_active(det, now) else "gone"
+    out["duration_s"] = int(det["_last_seen"] - det["_first_seen"])
+    out["seen_ago_s"] = int(now - det["_last_seen"])
+    levels = sensor_levels(det, now) if out["status"] == "active" else det.get("_last_levels", [])
+    out["sensor_levels"] = levels
+    if out["status"] == "active":
+        det["_last_levels"] = levels
+        det["_position"] = localization.locate(levels) if levels else None
+    out["position"] = det.get("_position")
+    out["nearest_sensor"] = levels[0]["sensor_id"] if levels else None
+    out["estimated_distance_m"] = levels[0]["estimated_distance_m"] if levels else None
+    return out
 
 
 def end_lost_tracks():
@@ -196,188 +266,111 @@ def current_tracks(max_age_s=600):
     return [public(d) for d in tracks[:20]]
 
 
-def public(det):
+def current_metrics():
     now = time.time()
-    out = {k: v for k, v in det.items() if not k.startswith("_") and k != "track_key"}
-    out["status"] = "active" if is_active(det, now) else "gone"
-    out["duration_s"] = int(det["_last_seen"] - det["_first_seen"])
-    out["seen_ago_s"] = int(now - det["_last_seen"])
-    return out
+    active = [d for d in detections if is_active(d, now)]
+    return {
+        "total_detections": len(detections),
+        "active_threats": sum(1 for d in active if d["threat_level"] == "high"),
+        "active_drones": len(active),
+        # Live value for the confidence chart: strongest active track, 0 if none.
+        "current_confidence": max((d["confidence"] for d in active), default=0.0),
+        "avg_confidence": round(sum(d["confidence"] for d in detections) / len(detections), 3) if detections else 0,
+        "sensors_online": sum(1 for s in sensors.values() if now - s["last_report"] < SENSOR_STALE_S),
+        "sensors_total": len(sensors),
+        "system_uptime": now - start_time,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
 
 
-# Shape-rule matches below this confidence are mostly WiFi (they're
-# halved on WiFi channels) - left on the live spectrum as RF activity,
-# not listed as detections. On a real drone-off recording this removed
-# 7 of the 8 generic matches; the drone's own signal is caught by the
-# hopping detector instead.
-MIN_SHAPE_CONFIDENCE = 0.5
-LINK_SPAN_MEMORY_SWEEPS = 10
+# ======================== Ingesting sensor reports ======================== #
+
+def ingest_report(sensor_id, report):
+    """One sweep's worth of results from one sensor."""
+    with lock:
+        s = sensors.setdefault(sensor_id, {"sensor_id": sensor_id, "reports": 0})
+        saved = saved_locations.get(sensor_id, {})
+        # Position: what the sensor says, else what was set on the dashboard.
+        s["lat"] = report.get("lat") if report.get("lat") is not None else saved.get("lat", s.get("lat"))
+        s["lon"] = report.get("lon") if report.get("lon") is not None else saved.get("lon", s.get("lon"))
+        s["last_report"] = time.time()
+        s["reports"] += 1
+        s["sweeps"] = report.get("sweep_number", s.get("sweeps", 0))
+        s["sweep_seconds"] = report.get("sweep_seconds")
+        s["learning"] = report.get("learning", False)
+        s["last_error"] = report.get("error")
+        if report.get("spectra"):
+            s["bands"] = list(report["spectra"])
+            spectra[sensor_id] = {
+                "sensor_id": sensor_id,
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "scan_number": s["sweeps"],
+                "sweep_seconds": s["sweep_seconds"],
+                "bands": report["spectra"],
+            }
+            broadcast({"type": "spectrum", "data": spectra[sensor_id]})
+
+        for det in report.get("detections", []):
+            det = dict(det)
+            track, new = record_detection(det, sensor_id)
+            if not new:
+                continue
+            broadcast({"type": "detection", "data": public(track)})
+            if track["threat_level"] == "high":
+                alert = {
+                    "title": "Drone detected",
+                    "message": f"{track['drone_type']} at {track['frequency_mhz']}MHz ({track['band']}), "
+                               f"+{track['above_noise_db']}dB at sensor '{sensor_id}'",
+                    "timestamp": track["timestamp"],
+                    "severity": "warning",
+                }
+                alerts.appendleft(alert)
+                broadcast({"type": "alert", "data": alert})
 
 
-class BandState:
-    def __init__(self, learn_sweeps):
-        self.background = rf.BackgroundModel()
-        self.hop = rf.HopDetector(self.background)
-        self.trackers = {}
-        self.learn_sweeps = learn_sweeps
-        self.link_span = None        # (lo_mhz, hi_mhz) of the last hopping link
-        self.link_span_ttl = 0       # sweeps left before that span is forgotten
-
-    @property
-    def learning(self):
-        return self.background.sweeps < self.learn_sweeps
-
-
-def fuse_band(band, dets, clusters, state):
-    """Turn one band's raw per-cluster matches into what the dashboard
-    shows: at most one 'frequency-hopping link' detection (calibration-
-    free hop detector and/or a confirmed calibrated signature), plus any
-    remaining shape matches that aren't just fragments of it."""
-    hop = state.hop.update(clusters)
-    if state.learning:
-        hop = None
-
-    # Calibrated signatures for this band.
-    cal_confirmed, cal_unconfirmed = None, None
-    for sig in signatures:
-        if sig.get("band") != band:
-            continue
-        tracker = state.trackers.setdefault(sig["name"], rf.SignatureTracker(sig))
-        hits = [d for d in dets if d.get("signature") == sig["name"]]
-        confirmed, seen = tracker.update({d["channel_mhz"] for d in hits})
-        if hits:
-            best = dict(max(hits, key=lambda d: d["above_noise_db"]))
-            best["channels_seen"] = seen
-            if confirmed:
-                cal_confirmed = (sig, best)
-            else:
-                cal_unconfirmed = (sig, best)
-
-    out = []
-    span = None
-    if hop or cal_confirmed:
-        hopping = bool(hop) or bool(cal_confirmed and cal_confirmed[0].get("hopping"))
-        kind = f"Frequency-hopping video link ({band})" if hopping else f"Drone video link ({band})"
-        if hop:
-            det = rf.cluster_detection(band, hop["cluster"], kind, 0.85, "hopping")
-            det["channels_seen"] = hop["channels_mhz"]
-        else:
-            det = dict(cal_confirmed[1], drone_type=kind)
-        if cal_confirmed:
-            sig = cal_confirmed[0]
-            det["drone_type"] = f"{kind} - matches calibrated '{sig['name']}'"
-            det["confidence"] = max(det["confidence"], float(sig.get("confidence", 0.85)))
-            det["signature"] = sig["name"]
-            det["channels_seen"] = sorted(set(det.get("channels_seen", [])) | set(cal_confirmed[1]["channels_seen"]))
-        det["threat_level"] = rf.threat_level(det["confidence"])
-        det["track_key"] = f"link:{band}"   # one entry however much it hops
-        out.append(det)
-        chans = det.get("channels_seen") or [det["frequency_mhz"]]
-        span = (min(chans) - 12.0, max(chans) + 12.0)
-        state.link_span, state.link_span_ttl = span, LINK_SPAN_MEMORY_SWEEPS
-    elif state.link_span_ttl > 0:
-        # Hopping link seen recently but not confirmed this sweep: its
-        # fragments still mustn't show up as separate "analog" signals.
-        span = state.link_span
-        state.link_span_ttl -= 1
-    # A single-channel calibrated sighting (not yet seen hopping) isn't
-    # listed - live, these fired on ordinary 2.4GHz traffic with the drone off.
-
-    for d in dets:
-        if d["method"] != "shape" or d["confidence"] < MIN_SHAPE_CONFIDENCE:
-            continue
-        if span and span[0] <= d["frequency_mhz"] <= span[1]:
-            continue  # a fragment of the hopping link already reported
-        out.append(d)
-
-    # Keep learning what's normal - but never from a sweep with a
-    # detection in it, so a drone can't become "background".
-    if state.learning or (not out and state.link_span_ttl == 0):
-        state.background.update(clusters)
-    return out
-
-
-def scanning_loop():
-    global latest_spectrum
-    analyzer = None
-    if MODULATION_ANALYSIS_AVAILABLE:
-        try:
-            analyzer = create_spectrum_analyzer(sample_rate=rf.SAMPLE_RATE_HZ)
-        except Exception as e:
-            print(f"Modulation analyzer unavailable ({e}) - continuing without it")
-
-    states = {band: BandState(LEARN_SWEEPS) for band in SWEEP_BANDS}
-    learning_announced = False
+def housekeeping_loop():
+    """Once a second: end lost tracks, re-estimate positions, push state.
+    Runs independently of any sensor so the dashboard stays live even if
+    every sensor goes quiet."""
     while True:
         try:
-            t0 = time.time()
-            spectra, found = {}, []
-            for band in SWEEP_BANDS:
-                result = rf.sweep_band(receiver, band)
-                spectra[band] = rf.spectrum_summary(result)
-                dets, clusters = rf.detections_for_band(result, signatures, analyzer)
-                st = states[band]
-                found.extend(fuse_band(band, dets, clusters, st))
-                spectra[band]["background"] = {
-                    "learning": st.learning,
-                    "sweeps": min(st.background.sweeps, st.learn_sweeps),
-                    "learn_sweeps": st.learn_sweeps,
-                    "busy_channels_mhz": st.background.busy_channels_mhz(),
-                }
-            if not learning_announced and not any(st.learning for st in states.values()):
-                learning_announced = True
+            with lock:
+                end_lost_tracks()
+                broadcast({"type": "tracks", "data": current_tracks()})
+                broadcast({"type": "metrics", "data": current_metrics()})
+                broadcast({"type": "sensors", "data": all_sensors()})
+        except Exception as e:
+            print(f"Housekeeping error: {e}")
+        time.sleep(1.0)
+
+
+# ======================== Local sensor (HackRF on this machine) ======================== #
+
+def local_sensor_loop(pipeline, sensor_id, lat, lon):
+    announced = False
+    while True:
+        try:
+            report = pipeline.sweep()
+            report.update({"lat": lat, "lon": lon})
+            ingest_report(sensor_id, report)
+            if not announced and not report["learning"]:
+                announced = True
                 print("Background learned - hopping detection is now active.")
-
-            scan_stats["scans_ok"] += 1
-            scan_stats["last_ok"] = time.time()
-            scan_stats["last_error"] = None
-            scan_stats["sweep_seconds"] = round(time.time() - t0, 2)
-            latest_spectrum = {
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "scan_number": scan_stats["scans_ok"],
-                "sweep_seconds": scan_stats["sweep_seconds"],
-                "bands": spectra,
-            }
-            broadcast({"type": "spectrum", "data": latest_spectrum})
-
-            for det in found:
-                sig = next((x for x in signatures if x["name"] == det.get("signature")), None)
-                det["estimated_distance_m"] = rf.estimate_distance_m(det["above_noise_db"], sig)
-                if not record_detection(det):
-                    continue
-                broadcast({"type": "detection", "data": public(det)})
-                if det["threat_level"] == "high":
-                    alert = {
-                        "title": "Drone detected",
-                        "message": f"{det['drone_type']} at {det['frequency_mhz']}MHz ({det['band']}), "
-                                   f"+{det['above_noise_db']}dB, ~{det['bandwidth_mhz']}MHz wide",
-                        "timestamp": det["timestamp"],
-                        "severity": "warning",
-                    }
-                    alerts.appendleft(alert)
-                    broadcast({"type": "alert", "data": alert})
-
-            if scan_stats["scans_ok"] % 5 == 1:
+            if report["sweep_number"] % 5 == 1:
                 parts = []
-                for band, sp in spectra.items():
+                for band, sp in report["spectra"].items():
                     top = sp["peaks"][0] if sp["peaks"] else None
                     parts.append(f"{band}: floor {sp['noise_floor_db']}dB, " +
                                  (f"strongest +{top['above_noise_db']}dB at {top['frequency_mhz']}MHz"
                                   if top else "nothing above threshold"))
-                hits = ", ".join(f"{d['drone_type']} @ {d['frequency_mhz']}MHz" for d in found) or "none"
-                print(f"Sweep #{scan_stats['scans_ok']} ({scan_stats['sweep_seconds']}s) | "
+                hits = ", ".join(f"{d['drone_type']} @ {d['frequency_mhz']}MHz"
+                                 for d in report["detections"]) or "none"
+                print(f"Sweep #{report['sweep_number']} ({report['sweep_seconds']}s) | "
                       + " | ".join(parts) + f" | drone-shaped: {hits}")
-
-            end_lost_tracks()
-            broadcast({"type": "tracks", "data": current_tracks()})
-            broadcast({"type": "metrics", "data": current_metrics()})
-
         except Exception as e:
-            scan_stats["scans_failed"] += 1
-            scan_stats["last_error"] = str(e)
             print(f"Scan error: {e}")
-
-        time.sleep(SWEEP_PAUSE_S)
+            ingest_report(sensor_id, {"lat": lat, "lon": lon, "error": str(e)})
+        time.sleep(0.2)
 
 
 # ======================== REST API (FastAPI) ======================== #
@@ -396,19 +389,51 @@ for _name in ("css", "js", "assets"):
         app.mount(f"/{_name}", StaticFiles(directory=f"ui/{_name}"), name=_name)
 
 
+@app.post("/api/sensors/{sensor_id}/report")
+async def api_sensor_report(sensor_id: str, request: Request):
+    """sensor_node.py posts one sweep's results here."""
+    report = await request.json()
+    ingest_report(sensor_id, report)
+    return {"success": True}
+
+
+@app.post("/api/sensors/{sensor_id}/location")
+async def api_sensor_location(sensor_id: str, request: Request):
+    """Set a sensor's position from the dashboard map (saved to sensors.json)."""
+    body = await request.json()
+    lat, lon = float(body["lat"]), float(body["lon"])
+    with lock:
+        save_sensor_location(sensor_id, lat, lon)
+        if sensor_id in sensors:
+            sensors[sensor_id]["lat"], sensors[sensor_id]["lon"] = lat, lon
+    return {"success": True}
+
+
+@app.get("/api/sensors")
+def api_sensors():
+    with lock:
+        return {"success": True, "data": {"items": all_sensors()}}
+
+
 @app.get("/api/spectrum")
-def api_spectrum():
-    return {"success": latest_spectrum is not None, "data": latest_spectrum}
+def api_spectrum(sensor: str = None):
+    with lock:
+        if sensor is None and spectra:
+            sensor = sorted(spectra)[0]
+        data = spectra.get(sensor)
+        return {"success": data is not None, "data": data, "sensors": sorted(spectra)}
 
 
 @app.get("/api/tracks")
 def api_tracks():
-    return {"success": True, "data": {"items": current_tracks()}}
+    with lock:
+        return {"success": True, "data": {"items": current_tracks()}}
 
 
 @app.get("/api/detections")
 def api_detections(limit: int = 50):
-    return {"success": True, "data": {"items": [public(d) for d in list(detections)[:limit]]}}
+    with lock:
+        return {"success": True, "data": {"items": [public(d) for d in list(detections)[:limit]]}}
 
 
 @app.get("/api/alerts")
@@ -418,23 +443,27 @@ def api_alerts(limit: int = 50, active: bool = False):
 
 @app.get("/api/system/metrics")
 def api_metrics():
-    return {"success": True, "data": current_metrics()}
+    with lock:
+        return {"success": True, "data": current_metrics()}
 
 
 @app.get("/api/hardware/status")
 def api_hardware_status():
+    with lock:
+        sens = all_sensors()
+    online = [s for s in sens if s["online"]]
     return {
         "success": True,
         "data": {
-            "device_type": "HackRF One",
-            # Real status: did a capture actually finish recently?
-            "connected": (time.time() - scan_stats["last_ok"]) < STALE_AFTER_S,
-            "scans_ok": scan_stats["scans_ok"],
-            "scans_failed": scan_stats["scans_failed"],
-            "last_error": scan_stats["last_error"],
-            "sweep_seconds": scan_stats["sweep_seconds"],
-            "sweep_ranges_mhz": {b: [rf.BANDS[b][0] / 1e6, rf.BANDS[b][1] / 1e6] for b in SWEEP_BANDS},
-            "calibrated_signatures": [sig["name"] for sig in signatures],
+            "device_type": f"{len(sens)} HackRF sensor(s)",
+            "connected": bool(online),
+            "sensors": sens,
+            "scans_ok": sum(s["sweeps"] for s in sens),
+            "scans_failed": 0,
+            "last_error": next((f"{s['sensor_id']}: {s['last_error']}" for s in sens if s["last_error"]), None),
+            "sweep_seconds": online[0]["sweep_seconds"] if online else None,
+            "sweep_ranges_mhz": {b: [rf.BANDS[b][0] / 1e6, rf.BANDS[b][1] / 1e6] for b in rf.BANDS},
+            "calibrated_signatures": [sig["name"] for sig in rf.load_signatures()],
             "sample_rate_hz": rf.SAMPLE_RATE_HZ,
             "temperature_celsius": None,
             "uptime_seconds": time.time() - start_time,
@@ -456,9 +485,14 @@ def api_trends(days: int = 7):
 # ======================== Entry point ======================== #
 
 def parse_args():
-    ap = argparse.ArgumentParser(description="HackRF drone dashboard backend")
+    ap = argparse.ArgumentParser(description="Drone detection central server + dashboard")
+    ap.add_argument("--no-local-sensor", action="store_true",
+                    help="don't use a HackRF on this machine - only remote sensor_node.py sensors")
+    ap.add_argument("--sensor-id", default="local", help="name of the local HackRF sensor (default 'local')")
+    ap.add_argument("--lat", type=float, help="local sensor latitude (or click the dashboard map)")
+    ap.add_argument("--lon", type=float, help="local sensor longitude")
     ap.add_argument("--bands", nargs="+", choices=["2.4", "5.8"], default=["2.4", "5.8"],
-                    help="which bands to sweep (default: both)")
+                    help="bands the local sensor sweeps (default: both)")
     ap.add_argument("--lna", type=int, default=16, help="LNA gain 0-40 dB, steps of 8 (default 16)")
     ap.add_argument("--vga", type=int, default=20, help="VGA gain 0-62 dB, steps of 2 (default 20)")
     ap.add_argument("--learn-sweeps", type=int, default=20,
@@ -466,34 +500,48 @@ def parse_args():
     ap.add_argument("--amp", action="store_true",
                     help="enable the HackRF's +14dB front-end amp (helps weak 5.8GHz signals; "
                          "can overload near strong WiFi)")
+    ap.add_argument("--port", type=int, default=8000)
     return ap.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    SWEEP_BANDS = [b + "GHz" for b in args.bands]
-    LEARN_SWEEPS = args.learn_sweeps
-    signatures = rf.load_signatures()
-
-    from python_hackrf import pyhackrf
-    print("Connecting to HackRF...")
-    receiver = rf.HackRFReceiver.open(pyhackrf, lna_gain=args.lna, vga_gain=args.vga, amp=args.amp)
 
     threading.Thread(target=run_ws_server, daemon=True).start()
-    threading.Thread(target=scanning_loop, daemon=True).start()
+    threading.Thread(target=housekeeping_loop, daemon=True).start()
 
-    for b in SWEEP_BANDS:
-        lo, hi = rf.BANDS[b]
-        print(f"Sweeping {b}: {lo / 1e6:.0f}-{hi / 1e6:.0f}MHz in {len(rf.plan_hops(lo, hi))} hops")
-    if signatures:
-        print(f"Loaded {len(signatures)} calibrated signature(s): " + ", ".join(s_["name"] for s_ in signatures))
+    receiver = None
+    if not args.no_local_sensor:
+        from python_hackrf import pyhackrf
+        from detector_pipeline import DetectorPipeline
+        analyzer = None
+        try:
+            from domain.algorithms import create_spectrum_analyzer
+            analyzer = create_spectrum_analyzer(sample_rate=rf.SAMPLE_RATE_HZ)
+        except Exception:
+            pass  # optional extra - modulation hints only
+        signatures = rf.load_signatures()
+        bands = [b + "GHz" for b in args.bands]
+        print("Connecting to HackRF...")
+        receiver = rf.HackRFReceiver.open(pyhackrf, lna_gain=args.lna, vga_gain=args.vga, amp=args.amp)
+        pipeline = DetectorPipeline(receiver, bands, signatures, args.learn_sweeps, analyzer)
+        lat = args.lat if args.lat is not None else saved_locations.get(args.sensor_id, {}).get("lat")
+        lon = args.lon if args.lon is not None else saved_locations.get(args.sensor_id, {}).get("lon")
+        threading.Thread(target=local_sensor_loop, args=(pipeline, args.sensor_id, lat, lon), daemon=True).start()
+        for b in bands:
+            lo, hi = rf.BANDS[b]
+            print(f"Sweeping {b}: {lo / 1e6:.0f}-{hi / 1e6:.0f}MHz in {len(rf.plan_hops(lo, hi))} hops")
+        if signatures:
+            print(f"Loaded {len(signatures)} calibrated signature(s): " + ", ".join(s_["name"] for s_ in signatures))
+        print(f"Learning the background for the first {args.learn_sweeps} sweeps - keep drones switched OFF "
+              f"until it says 'Background learned'.")
     else:
-        print("No drone_signatures.json yet - using generic shape rules only (run calibrate_detector.py to add yours)")
-    print(f"Learning the background for the first {LEARN_SWEEPS} sweeps - keep drones switched OFF until "
-          f"it says 'Background learned'.")
-    print("Dashboard: http://localhost:8000")
-    print("WebSocket: ws://localhost:8082/ws")
+        print("No local HackRF - waiting for sensor_node.py reports.")
+
+    print(f"Dashboard: http://localhost:{args.port}")
+    print("Sensors report to: http://<this-machine's-IP>:%d/api/sensors/<id>/report" % args.port)
     try:
-        uvicorn.run(app, host="0.0.0.0", port=8000)
+        uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="warning")
     finally:
-        receiver.close(pyhackrf)
+        if receiver is not None:
+            receiver.close(pyhackrf)
