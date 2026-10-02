@@ -1751,32 +1751,42 @@
             fillSelect('vidBand', new Set(videoList.map(e => e.band)));
             const rows = filteredVideo();
             const types = [
-                ['Wideband data', 'Wide (≥5 MHz) but neither clearly flat nor clearly peaked - often WiFi, LTE, or a signal partly cut off'],
-                ['Digital video', 'Flat-topped, 10-40 MHz (OFDM) - digital video links, but also WiFi. Look at Persistence.'],
-                ['Analog video', 'Peaked in the middle with tapering edges (FM) - analog FPV video'],
+                ['Wideband data', 'Wideband shape', 'Wide (≥5 MHz) but neither clearly flat nor clearly peaked - often WiFi, LTE, or a signal partly cut off'],
+                ['Digital video', 'Digital-video shape', 'Flat-topped, 10-40 MHz (OFDM) - this shape fits digital video links AND WiFi. Only the continuous ones are likely drones.'],
+                ['Analog video', 'Analog-video shape', 'Peaked in the middle with tapering edges (FM) - this shape fits analog FPV video, but bursty ones on a WiFi channel are just WiFi.'],
             ];
-            document.getElementById('vidSummary').innerHTML = types.map(([t]) => {
+            document.getElementById('vidSummary').innerHTML = types.map(([t, title]) => {
                 const all = rows.filter(r => r.type === t);
-                return `<span class="chip">${t}: <b>${all.length}</b> (${all.filter(r => r.persistence === 'continuous').length} continuous,
-                        ${all.filter(r => r.active).length} active now)</span>`;
+                const cont = all.filter(r => r.persistence === 'continuous').length;
+                return `<span class="chip">${title}: <b>${all.length}</b> signals, <b style="color:${cont ? '#ff6b6b' : '#4caf50'}">${cont} look like a real video link</b>
+                        (rest are WiFi/bursts)</span>`;
             }).join('');
-            document.getElementById('vidSections').innerHTML = types.map(([t, desc]) => {
+            document.getElementById('vidSections').innerHTML = types.map(([t, title, desc]) => {
                 const list = rows.filter(r => r.type === t);
                 return `<div class="card" style="margin-bottom: 20px;">
-                    <div class="card-header"><h3>${t} <span style="color:#888;font-weight:400">(${list.length})</span></h3>
+                    <div class="card-header"><h3>${title} <span style="color:#888;font-weight:400">(${list.length})</span></h3>
                         <span style="font-size:0.8em;color:#888">${desc}</span></div>
                     <div class="card-content"><div class="detections-table" style="max-height: 420px; overflow: auto;"><table>
-                    <thead><tr><th>Frequency</th><th>Width</th><th>Level now / max</th><th>Persistence</th><th>Duty</th><th>Airtime</th>
+                    <thead><tr><th>Frequency</th><th>Likely</th><th>Width</th><th>Level now / max</th><th>Persistence</th><th>Duty</th><th>Airtime</th>
                         <th>Crest / edge</th><th>WiFi ch</th><th>First seen</th><th>Last seen</th><th>Count</th><th>Sensor</th></tr></thead>
-                    <tbody>${list.length ? list.map(e => `
-                        <tr style="${e.active ? '' : 'opacity:0.6'}"><td><b>${e.center_mhz} MHz</b></td><td>${e.bandwidth_mhz} MHz</td>
+                    <tbody>${list.length ? list.map(e => { const vd = videoVerdict(e); return `
+                        <tr style="${e.active ? '' : 'opacity:0.6'}"><td><b>${e.center_mhz} MHz</b></td>
+                        <td style="color:${vd[1]};font-weight:600;white-space:nowrap">${vd[0]}</td><td>${e.bandwidth_mhz} MHz</td>
                         <td>+${e.level_db} / +${e.max_level_db} dB</td><td>${persistencePill(e.persistence)}</td>
                         <td>${pct(e.duty_cycle_pct)}</td><td>${pct(e.airtime_pct)}</td><td>${e.crest_factor_db} / ${e.edge_drop_db} dB</td>
                         <td>${e.wifi_channel_mhz ?? '-'}</td><td>${new Date(e.first_seen).toLocaleTimeString()}</td>
                         <td>${e.active ? '<b style="color:#4caf50">now</b>' : new Date(e.last_seen).toLocaleTimeString()}</td>
-                        <td>${e.detections}</td><td>${e.sensor_id}</td></tr>`).join('')
-                    : '<tr><td colspan="12">None</td></tr>'}</tbody></table></div></div></div>`;
+                        <td>${e.detections}</td><td>${e.sensor_id}</td></tr>`; }).join('')
+                    : '<tr><td colspan="13">None</td></tr>'}</tbody></table></div></div></div>`;
             }).join('');
+        }
+
+        // Plain-English verdict: only a continuous transmitter is a likely video
+        // link. Bursty on a WiFi channel = WiFi; bursty elsewhere = not a drone.
+        function videoVerdict(e) {
+            if (e.persistence === 'continuous') return ['likely video link', '#ff6b6b'];
+            if (e.wifi_channel_mhz) return ['WiFi', '#888'];
+            return ['not a drone (bursty)', '#888'];
         }
 
         function exportCsv(which) {
