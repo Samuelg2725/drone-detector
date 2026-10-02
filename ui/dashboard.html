@@ -917,7 +917,7 @@
                             <label>Sensor</label><select id="vidSensor" class="raw-select" onchange="renderVideo()"><option value="">All</option></select>
                             <label>Band</label><select id="vidBand" class="raw-select" onchange="renderVideo()"><option value="">All</option></select>
                             <label>Show</label><select id="vidStream" class="raw-select" onchange="renderVideo()">
-                                <option value="">Everything (including bursts)</option><option value="continuous">Continuous transmitters only</option>
+                                <option value="continuous" selected>Likely video links only</option><option value="">Everything (incl. WiFi/bursts)</option>
                                 <option value="active">Active now only</option></select>
                             <label>Sort</label><select id="vidSort" class="raw-select" onchange="renderVideo()">
                                 <option value="last">Most recently active</option><option value="first">Most recently first seen</option>
@@ -1750,13 +1750,16 @@
             fillSelect('vidSensor', new Set(videoList.map(e => e.sensor_id)));
             fillSelect('vidBand', new Set(videoList.map(e => e.band)));
             const rows = filteredVideo();
+            const sv = id => document.getElementById(id).value;
+            const allRows = videoList.filter(e => (!sv('vidSensor') || e.sensor_id === sv('vidSensor')) && (!sv('vidBand') || e.band === sv('vidBand')));
+            const hidden = allRows.length - rows.length;
             const types = [
                 ['Wideband data', 'Wideband shape', 'Wide (≥5 MHz) but neither clearly flat nor clearly peaked - often WiFi, LTE, or a signal partly cut off'],
                 ['Digital video', 'Digital-video shape', 'Flat-topped, 10-40 MHz (OFDM) - this shape fits digital video links AND WiFi. Only the continuous ones are likely drones.'],
                 ['Analog video', 'Analog-video shape', 'Peaked in the middle with tapering edges (FM) - this shape fits analog FPV video, but bursty ones on a WiFi channel are just WiFi.'],
             ];
-            document.getElementById('vidSummary').innerHTML = types.map(([t, title]) => {
-                const all = rows.filter(r => r.type === t);
+            document.getElementById('vidSummary').innerHTML = (hidden > 0 ? `<span class="chip" style="background:rgba(136,136,136,0.15)">${hidden} WiFi/other wide signal(s) hidden - pick "Everything" to see them</span>` : '') + types.map(([t, title]) => {
+                const all = allRows.filter(r => r.type === t);
                 const cont = all.filter(r => r.persistence === 'continuous').length;
                 return `<span class="chip">${title}: <b>${all.length}</b> signals, <b style="color:${cont ? '#ff6b6b' : '#4caf50'}">${cont} look like a real video link</b>
                         (rest are WiFi/bursts)</span>`;
