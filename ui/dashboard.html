@@ -309,6 +309,25 @@
         .drone-status-main .label { font-weight: 600; }
         .drone-status-main .meta { font-size: 0.85em; color: #aaa; margin-top: 3px; }
 
+        details.why { margin-top: 6px; font-size: 0.85em; color: #ccc; }
+        details.why summary { cursor: pointer; color: #4facfe; }
+        details.why ul { margin: 6px 0 0 18px; padding: 0; }
+        details.why li { margin-bottom: 3px; }
+        .why-effect { color: #ffb74d; font-weight: 600; }
+        .filter-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; font-size: 0.85em; }
+        .filter-bar label { color: #888; margin-left: 6px; }
+        .filter-bar input { width: 80px; background: #1a1a2e; color: #e0e0e0; border: 1px solid #4facfe; border-radius: 6px; padding: 3px 6px; }
+        .chip { display: inline-block; padding: 6px 12px; border-radius: 8px; background: rgba(255,255,255,0.05); margin: 0 8px 8px 0; font-size: 0.85em; }
+        .chip b { font-size: 1.2em; }
+        .pill-small { font-size: 0.75em; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+        .pill-continuous { background: #ff4444; color: #fff; }
+        .pill-intermittent { background: #ffb74d; color: #000; }
+        .pill-bursty { background: #555; color: #ddd; }
+        .pill-collecting { background: #333; color: #aaa; }
+        .howto h4 { color: #4facfe; margin: 18px 0 6px; }
+        .howto p, .howto li { color: #ccc; line-height: 1.5; font-size: 0.92em; }
+        .howto table { font-size: 0.88em; }
+
         .raw-select, .raw-btn {
             background: #1a1a2e; color: #e0e0e0; border: 1px solid #4facfe; border-radius: 6px;
             padding: 3px 8px; margin-left: 6px; cursor: pointer;
@@ -476,6 +495,14 @@
                 <div class="nav-item" data-page="raw">
                     <i class="fas fa-wave-square"></i>
                     <span>Raw Data</span>
+                </div>
+                <div class="nav-item" data-page="video">
+                    <i class="fas fa-video"></i>
+                    <span>Video Detections</span>
+                </div>
+                <div class="nav-item" data-page="howto">
+                    <i class="fas fa-question-circle"></i>
+                    <span>How It Works</span>
                 </div>
                 <div class="nav-item" data-page="analytics">
                     <i class="fas fa-chart-line"></i>
@@ -715,7 +742,7 @@
             <div id="rawPage" style="display: none;">
                 <div class="card" style="margin-bottom: 20px;">
                     <div class="card-header">
-                        <h3><i class="fas fa-wave-square"></i> Raw HackRF Data</h3>
+                        <h3><i class="fas fa-wave-square"></i> Raw SDR Data - live view</h3>
                         <span>
                             <select id="rawSensor" onchange="rawSelectSensor(this.value)" class="raw-select"></select>
                             <span id="rawBandButtons"></span>
@@ -730,6 +757,38 @@
                         </div>
                         <canvas id="waterfall" width="1024" height="220" style="width: 100%; height: 220px; background: #000; border-radius: 6px; image-rendering: pixelated;"></canvas>
                         <div id="waterfallAxis" style="display: flex; justify-content: space-between; font-size: 0.8em; color: #888; margin-top: 2px;"></div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-bottom: 20px;">
+                    <div class="card-header"><h3><i class="fas fa-list-ul"></i> Signal log - every signal every sensor saw</h3>
+                        <span id="logCount" style="font-size: 0.8em; color: #888;"></span></div>
+                    <div class="card-content">
+                        <div class="filter-bar">
+                            <label>Sensor</label><select id="logSensor" class="raw-select" onchange="renderSignalLog()"><option value="">All</option></select>
+                            <label>Band</label><select id="logBand" class="raw-select" onchange="renderSignalLog()"><option value="">All</option></select>
+                            <label>MHz</label><input id="logMin" type="number" placeholder="min" onchange="renderSignalLog()">
+                            <span>-</span><input id="logMax" type="number" placeholder="max" onchange="renderSignalLog()">
+                            <label>WiFi</label><select id="logWifi" class="raw-select" onchange="renderSignalLog()">
+                                <option value="">All</option><option value="wifi">On a WiFi channel</option><option value="nonwifi">Not on a WiFi channel</option></select>
+                            <label>Type</label><select id="logKind" class="raw-select" onchange="renderSignalLog()">
+                                <option value="">All</option><option>Analog video</option><option>Digital video</option><option>Wideband data</option>
+                                <option>Signal</option><option>Narrowband</option><option value="868">868 packets</option></select>
+                            <label>Sort</label><select id="logSort" class="raw-select" onchange="renderSignalLog()">
+                                <option value="new">Newest first</option><option value="old">Oldest first</option>
+                                <option value="lvl_desc">Level high-low</option><option value="lvl_asc">Level low-high</option></select>
+                            <button id="logPauseBtn" class="raw-btn" onclick="toggleLogPause()">Pause</button>
+                            <button class="raw-btn" onclick="clearSignalLog()">Clear</button>
+                            <button class="raw-btn" onclick="exportCsv('signals')">Export CSV</button>
+                        </div>
+                        <div class="detections-table" style="max-height: 480px; overflow: auto;"><table>
+                            <thead><tr><th>Time</th><th>Sensor</th><th>Band</th><th>Frequency</th><th>Width</th><th>Level</th>
+                                <th>Duty</th><th>Airtime</th><th>Type</th><th>WiFi ch</th></tr></thead>
+                            <tbody id="logBody"><tr><td colspan="10">Waiting for data...</td></tr></tbody></table></div>
+                        <div style="text-align: center; margin-top: 8px;"><button class="raw-btn" onclick="logShowMore()">Show more</button></div>
+                        <div style="font-size: 0.8em; color: #888; margin-top: 6px;">Level = dB above that sensor's own noise floor
+                            (not calibrated dBm). Duty = % of sweeps in the last 30 s this frequency was busy. Airtime = % of the 6.5 ms
+                            capture it was actually transmitting. Most rows are ordinary WiFi/Bluetooth - this is everything the detectors look at.</div>
                     </div>
                 </div>
 
@@ -785,6 +844,80 @@
                 <div class="card" style="margin-top: 20px;">
                     <div class="card-header"><h3><i class="fas fa-code"></i> Raw report (JSON, long arrays shortened)</h3></div>
                     <div class="card-content"><pre id="rawJson" style="max-height: 400px; overflow: auto; font-size: 0.75em; color: #9ad; white-space: pre-wrap;"></pre></div>
+                </div>
+            </div>
+
+            <!-- Video detections -->
+            <div id="videoPage" style="display: none;">
+                <div class="card" style="margin-bottom: 20px;">
+                    <div class="card-header"><h3><i class="fas fa-video"></i> Video Detections - wide signals, grouped per transmitter</h3></div>
+                    <div class="card-content">
+                        <div class="filter-bar">
+                            <label>Sensor</label><select id="vidSensor" class="raw-select" onchange="renderVideo()"><option value="">All</option></select>
+                            <label>Band</label><select id="vidBand" class="raw-select" onchange="renderVideo()"><option value="">All</option></select>
+                            <label>Show</label><select id="vidStream" class="raw-select" onchange="renderVideo()">
+                                <option value="">Everything (including bursts)</option><option value="continuous">Continuous transmitters only</option>
+                                <option value="active">Active now only</option></select>
+                            <label>Sort</label><select id="vidSort" class="raw-select" onchange="renderVideo()">
+                                <option value="last">Most recently active</option><option value="first">Most recently first seen</option>
+                                <option value="duty">Duty cycle high-low</option><option value="count">Detections high-low</option>
+                                <option value="bw">Bandwidth high-low</option></select>
+                            <button class="raw-btn" onclick="exportCsv('video')">Export CSV</button>
+                            <button class="raw-btn" onclick="clearVideo()">Clear</button>
+                        </div>
+                        <div id="vidSummary"></div>
+                        <div style="font-size: 0.85em; color: #aaa;">
+                            Every signal at least 5 MHz wide, filed by shape. <b>Shape alone can't tell a drone from WiFi</b> - the
+                            <b>Persistence</b> column does most of the work: a video link is <span class="pill-small pill-continuous">continuous</span>
+                            (busy in &ge;80% of sweeps and transmitting &ge;80% of the time); WiFi is usually
+                            <span class="pill-small pill-bursty">bursty</span> or <span class="pill-small pill-intermittent">intermittent</span>.
+                        </div>
+                    </div>
+                </div>
+                <div id="vidSections"></div>
+            </div>
+
+            <!-- How it works -->
+            <div id="howtoPage" style="display: none;">
+                <div class="card howto">
+                    <div class="card-header"><h3><i class="fas fa-question-circle"></i> How detection works</h3></div>
+                    <div class="card-content">
+                        <h4>1. Sweeping</h4>
+                        <p>Each sensor (HackRF or Pluto) captures 20 MHz at a time and keeps the clean middle 14 MHz, retuning until each band is
+                        covered: 868 MHz, 2.4 GHz, 5.165-5.255 GHz and 5.72-5.855 GHz - about once a second. Each slice is ~128 averaged FFTs, so the
+                        noise is smooth. Every signal more than 6 dB above the local noise floor is measured: centre, width, how peaked it is (crest
+                        factor), how its edges fall away (edge drop), its <b>duty cycle</b> and its <b>airtime</b>.</p>
+                        <p>For the first ~25 s it learns what is normal here (WiFi routers etc.) - keep drones off then.</p>
+
+                        <h4>2. The rules, and the confidence each gives</h4>
+                        <table><thead><tr><th>Rule</th><th>What it looks for</th><th>Confidence</th></tr></thead><tbody>
+                        <tr><td>Frequency-hopping video link (2.4 / 5 GHz)</td><td>A strong (&ge;15 dB), wide (&ge;3 MHz) signal in 4 of the last 5 sweeps, peaking on 3+ frequencies, at least 2 of them normally quiet here. WiFi routers don't jump around; this kind of drone link does. No calibration needed.</td><td>85%</td></tr>
+                        <tr><td>FHSS control link (868 MHz)</td><td>Short packets in 5 of the last 10 sweeps, on 6+ channels spread over 2+ MHz (ExpressLRS / Crossfire). Alarms, meters and LoRaWAN use one or a few fixed channels. <i>Not yet tested on a real link.</i></td><td>80%</td></tr>
+                        <tr><td>Control + video at once</td><td>Both of the above (or a video match) at the same sensor - the strongest sign of an FPV drone.</td><td>92%</td></tr>
+                        <tr><td>Analog FPV video (shape)</td><td>&ge;5 MHz wide, peaked in the middle (crest &ge;7 dB), tapering edges (edge drop &ge;10 dB).</td><td>starts 50-95% by shape; +10% on an FPV channel; +10% if continuous; halved if bursty; halved if on a WiFi channel and not continuous</td></tr>
+                        <tr><td>Wideband digital link (shape)</td><td>Flat top, 10-40 MHz wide (crest &lt;5 dB, edge drop &lt;8 dB). WiFi looks identical.</td><td>capped at 60%; +25% only if continuous; x0.8 intermittent; halved if bursty or on a WiFi channel</td></tr>
+                        <tr><td>Calibrated signature</td><td>Peak on a channel learned from YOUR drone with calibrate_detector.py, shape inside its learned ranges.</td><td>75-90% (set by how it tested)</td></tr>
+                        </tbody></table>
+                        <p>Below 50% nothing is reported (it stays visible in the Raw Data log). 50-60% = low, 60-80% = medium, above 80% = high.
+                        Every detection has a <b>"Why it says this"</b> list showing exactly which of these applied.</p>
+
+                        <h4>3. Duty cycle and airtime</h4>
+                        <p><b>Duty cycle</b>: in what % of sweeps over the last 30 s was this frequency busy (measured on the middle half of the signal,
+                        so its weak edges don't drag it down). <b>Airtime</b>: within one 6.5 ms capture, what % of the time was it actually
+                        transmitting. A video link is on every sweep and transmits ~100% of the time - <b>continuous</b>. WiFi comes and goes and sends
+                        packets with gaps - <b>bursty</b> or <b>intermittent</b>. Until 8 sweeps of history exist it shows <b>collecting</b>.</p>
+
+                        <h4>4. Tracks, positions and alerts</h4>
+                        <p>The same drone seen in several sweeps, or by several sensors, is one entry: <b>ACTIVE</b> while seen, <b>GONE</b> after ~12 s
+                        of silence. With 3+ sensors hearing it, the position is estimated from how loudly each hears it (tens of metres accuracy -
+                        see the ± circle; "OUTSIDE, to the SW" when it is beyond the sensor ring). "Signal rising / falling" is relative to the
+                        loudest sensor.</p>
+
+                        <h4>5. What it can't do (yet)</h4>
+                        <ul><li>Name a drone's make/model - that needs decoding Remote ID / DJI DroneID.</li>
+                        <li>Tell two drones on the same band apart - they merge into one entry.</li>
+                        <li>Bands not swept: 433 MHz, 915 MHz, 1.2/1.3 GHz.</li></ul>
+                    </div>
                 </div>
             </div>
 
@@ -879,6 +1012,13 @@
                     break;
                 case 'tracks':
                     updateTracks(data.data);
+                    break;
+                case 'signals':
+                    addSignals(data.data);
+                    break;
+                case 'video':
+                    videoList = data.data || [];
+                    if (document.getElementById('videoPage').style.display !== 'none') renderVideo();
                     break;
                 case 'sensors':
                     updateSensors(data.data);
@@ -1139,7 +1279,7 @@
         }
         
         function showPage(page) {
-            const pages = ['dashboard', 'map', 'detections', 'alerts', 'hardware', 'raw', 'analytics', 'settings'];
+            const pages = ['dashboard', 'map', 'detections', 'alerts', 'hardware', 'raw', 'video', 'howto', 'analytics', 'settings'];
             pages.forEach(p => {
                 const element = document.getElementById(p + 'Page');
                 if (element) element.style.display = 'none';
@@ -1165,6 +1305,10 @@
             }
             if (page === 'raw') {
                 renderRaw(true);
+                renderSignalLog();
+            }
+            if (page === 'video') {
+                renderVideo();
             }
         }
         
@@ -1177,7 +1321,8 @@
                     loadActiveAlerts(),
                     loadSystemMetrics(),
                     loadHardwareStatus(),
-                    loadSpectrum()
+                    loadSpectrum(),
+                    loadSignalsAndVideo()
                 ]);
             } catch (error) {
                 console.error('Error loading initial data:', error);
@@ -1320,6 +1465,140 @@
             } catch (error) {
                 console.error('Error loading spectrum:', error);
             }
+        }
+
+        // ---------------- Signal log & video detections ----------------
+        const LOG_MAX = 5000;
+        let signalLog = [];          // newest first
+        let logPaused = false, logLimit = 200;
+        let videoList = [];
+
+        async function loadSignalsAndVideo() {
+            try {
+                const a = await (await fetch(`${API_URL}/signals?limit=${LOG_MAX}`)).json();
+                if (a.success) signalLog = a.data.items || [];
+                const b = await (await fetch(`${API_URL}/video`)).json();
+                if (b.success) videoList = b.data.items || [];
+            } catch (e) { console.error('Error loading signal log', e); }
+        }
+
+        function addSignals(entries) {
+            if (logPaused || !entries || !entries.length) return;
+            signalLog = entries.slice().reverse().concat(signalLog).slice(0, LOG_MAX);
+        }
+        setInterval(() => {
+            if (!logPaused && document.getElementById('rawPage').style.display !== 'none') renderSignalLog();
+        }, 1500);
+
+        function toggleLogPause() {
+            logPaused = !logPaused;
+            const b = document.getElementById('logPauseBtn');
+            b.innerText = logPaused ? 'Resume' : 'Pause'; b.classList.toggle('on', logPaused);
+        }
+        function clearSignalLog() { signalLog = []; renderSignalLog(); }
+        function logShowMore() { logLimit += 200; renderSignalLog(); }
+
+        function fillSelect(id, values) {
+            const el = document.getElementById(id), cur = el.value;
+            const opts = ['<option value="">All</option>'].concat([...values].sort().map(v => `<option value="${v}">${v}</option>`));
+            if (el.options.length !== opts.length) { el.innerHTML = opts.join(''); el.value = cur; }
+        }
+
+        function persistencePill(p) {
+            return p ? `<span class="pill-small pill-${p}">${p}</span>` : '';
+        }
+        const pct = v => (v === null || v === undefined) ? '-' : `${Math.round(v)}%`;
+
+        function filteredSignals() {
+            const v = id => document.getElementById(id).value;
+            const lo = parseFloat(v('logMin')), hi = parseFloat(v('logMax'));
+            let rows = signalLog.filter(e =>
+                (!v('logSensor') || e.sensor_id === v('logSensor')) && (!v('logBand') || e.band === v('logBand')) &&
+                (isNaN(lo) || e.frequency_mhz >= lo) && (isNaN(hi) || e.frequency_mhz <= hi) &&
+                (!v('logWifi') || (v('logWifi') === 'wifi') === (e.wifi_channel_mhz != null)) &&
+                (!v('logKind') || (v('logKind') === '868' ? e.kind.startsWith('868') : e.kind === v('logKind'))));
+            const s = v('logSort');
+            if (s === 'old') rows = rows.slice().reverse();
+            if (s === 'lvl_desc') rows = rows.slice().sort((a, b) => b.level_db - a.level_db);
+            if (s === 'lvl_asc') rows = rows.slice().sort((a, b) => a.level_db - b.level_db);
+            return rows;
+        }
+
+        function renderSignalLog() {
+            fillSelect('logSensor', new Set(signalLog.map(e => e.sensor_id)));
+            fillSelect('logBand', new Set(signalLog.map(e => e.band)));
+            const rows = filteredSignals();
+            document.getElementById('logCount').innerText = `${rows.length} of ${signalLog.length} entries`;
+            document.getElementById('logBody').innerHTML = rows.length ? rows.slice(0, logLimit).map(e => `
+                <tr><td>${new Date(e.timestamp).toLocaleTimeString()}</td><td>${e.sensor_id}</td><td>${e.band}</td>
+                    <td>${e.frequency_mhz} MHz</td><td>${e.bandwidth_mhz} MHz</td><td>+${e.level_db} dB</td>
+                    <td>${pct(e.duty_cycle_pct)}</td><td>${pct(e.airtime_pct)}</td>
+                    <td>${e.kind}${e.persistence && e.persistence !== 'collecting' ? ' ' + persistencePill(e.persistence) : ''}
+                        ${e.classified_as ? `<br><span style="color:#ffb74d;font-size:0.85em">${e.classified_as}</span>` : ''}</td>
+                    <td>${e.wifi_channel_mhz ?? '-'}</td></tr>`).join('')
+                : '<tr><td colspan="10">No signals match these filters</td></tr>';
+        }
+
+        async function clearVideo() {
+            if (!confirm('Clear all video detections?')) return;
+            try { await fetch(`${API_URL}/video/clear`, {method: 'POST'}); } catch (e) {}
+            videoList = []; renderVideo();
+        }
+
+        function filteredVideo() {
+            const v = id => document.getElementById(id).value;
+            let rows = videoList.filter(e => (!v('vidSensor') || e.sensor_id === v('vidSensor')) &&
+                (!v('vidBand') || e.band === v('vidBand')) &&
+                (v('vidStream') !== 'continuous' || e.persistence === 'continuous') &&
+                (v('vidStream') !== 'active' || e.active));
+            const key = {last: e => -new Date(e.last_seen), first: e => -new Date(e.first_seen), duty: e => -(e.duty_cycle_pct ?? -1),
+                         count: e => -e.detections, bw: e => -e.bandwidth_mhz}[v('vidSort')];
+            return rows.slice().sort((a, b) => key(a) - key(b));
+        }
+
+        function renderVideo() {
+            fillSelect('vidSensor', new Set(videoList.map(e => e.sensor_id)));
+            fillSelect('vidBand', new Set(videoList.map(e => e.band)));
+            const rows = filteredVideo();
+            const types = [
+                ['Wideband data', 'Wide (≥5 MHz) but neither clearly flat nor clearly peaked - often WiFi, LTE, or a signal partly cut off'],
+                ['Digital video', 'Flat-topped, 10-40 MHz (OFDM) - digital video links, but also WiFi. Look at Persistence.'],
+                ['Analog video', 'Peaked in the middle with tapering edges (FM) - analog FPV video'],
+            ];
+            document.getElementById('vidSummary').innerHTML = types.map(([t]) => {
+                const all = rows.filter(r => r.type === t);
+                return `<span class="chip">${t}: <b>${all.length}</b> (${all.filter(r => r.persistence === 'continuous').length} continuous,
+                        ${all.filter(r => r.active).length} active now)</span>`;
+            }).join('');
+            document.getElementById('vidSections').innerHTML = types.map(([t, desc]) => {
+                const list = rows.filter(r => r.type === t);
+                return `<div class="card" style="margin-bottom: 20px;">
+                    <div class="card-header"><h3>${t} <span style="color:#888;font-weight:400">(${list.length})</span></h3>
+                        <span style="font-size:0.8em;color:#888">${desc}</span></div>
+                    <div class="card-content"><div class="detections-table" style="max-height: 420px; overflow: auto;"><table>
+                    <thead><tr><th>Frequency</th><th>Width</th><th>Level now / max</th><th>Persistence</th><th>Duty</th><th>Airtime</th>
+                        <th>Crest / edge</th><th>WiFi ch</th><th>First seen</th><th>Last seen</th><th>Count</th><th>Sensor</th></tr></thead>
+                    <tbody>${list.length ? list.map(e => `
+                        <tr style="${e.active ? '' : 'opacity:0.6'}"><td><b>${e.center_mhz} MHz</b></td><td>${e.bandwidth_mhz} MHz</td>
+                        <td>+${e.level_db} / +${e.max_level_db} dB</td><td>${persistencePill(e.persistence)}</td>
+                        <td>${pct(e.duty_cycle_pct)}</td><td>${pct(e.airtime_pct)}</td><td>${e.crest_factor_db} / ${e.edge_drop_db} dB</td>
+                        <td>${e.wifi_channel_mhz ?? '-'}</td><td>${new Date(e.first_seen).toLocaleTimeString()}</td>
+                        <td>${e.active ? '<b style="color:#4caf50">now</b>' : new Date(e.last_seen).toLocaleTimeString()}</td>
+                        <td>${e.detections}</td><td>${e.sensor_id}</td></tr>`).join('')
+                    : '<tr><td colspan="12">None</td></tr>'}</tbody></table></div></div></div>`;
+            }).join('');
+        }
+
+        function exportCsv(which) {
+            const rows = which === 'video' ? filteredVideo() : filteredSignals();
+            if (!rows.length) { alert('Nothing to export'); return; }
+            const cols = Object.keys(rows[0]);
+            const esc = x => { const s = x === null || x === undefined ? '' : String(x); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+            const csv = [cols.join(',')].concat(rows.map(r => cols.map(c => esc(r[c])).join(','))).join('\n');
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
+            a.download = `${which}_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`;
+            a.click();
         }
 
         // ---------------- Raw Data page ----------------
@@ -1578,6 +1857,12 @@
             return `${Math.floor(s / 60)}m ${s % 60}s`;
         }
 
+        function reasonsHtml(reasons) {
+            if (!reasons || !reasons.length) return '';
+            return `<details class="why"><summary>Why ${''}it says this</summary><ul>` + reasons.map(r =>
+                `<li>${r.text}${r.effect ? ` <span class="why-effect">→ ${r.effect}</span>` : ''}</li>`).join('') + '</ul></details>';
+        }
+
         function positionText(t) {
             const p = t.position;
             if (!p) return '';
@@ -1615,7 +1900,9 @@
                                 ${t.trend && t.trend !== 'steady' ? ` · <b>${t.trend}</b>` : ''}
                                 ${(t.sensor_levels || []).length ? `<br>Power at each sensor: ` + t.sensor_levels.map(l => `${l.sensor_id} +${l.level_db} dB`).join(' · ') : ''}
                                 ${t.channels_seen ? ` · channels ${t.channels_seen.map(c => Math.round(c)).join(', ')}` : ''}
+                                ${t.persistence && t.persistence !== 'collecting' ? ` · ${t.persistence} (duty ${t.duty_cycle_pct}%, airtime ${t.airtime_pct}%)` : ''}
                             </div>
+                            ${reasonsHtml(t.reasons)}
                         </div>
                     </div>`;
                 el.innerHTML = (active.length ? '' : `<div class="drone-status-row"><span class="status-pill clear">NO DRONES</span>

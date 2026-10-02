@@ -146,10 +146,20 @@ class HackRFReceiver:
         self.last_callback = 0.0
         self.lna_gain, self.vga_gain, self.amp = lna_gain, vga_gain, amp
 
+    kind = "hackrf"
+
     @classmethod
-    def open(cls, pyhackrf, **gains):
+    def open(cls, pyhackrf, serial=None, **gains):
         pyhackrf.pyhackrf_init()
-        sdr = pyhackrf.pyhackrf_open()
+        if serial:
+            # Several HackRFs on one machine: pick one by serial number
+            # (`hackrf_info` lists them).
+            open_by_serial = getattr(pyhackrf, "pyhackrf_open_by_serial", None)
+            if open_by_serial is None:
+                raise RuntimeError("this python_hackrf version can't open by serial - update it")
+            sdr = open_by_serial(serial)
+        else:
+            sdr = pyhackrf.pyhackrf_open()
         rx = cls(sdr, **gains)
         sdr.pyhackrf_set_sample_rate(SAMPLE_RATE_HZ)
         sdr.pyhackrf_set_freq(BANDS["2.4GHz"][0])
@@ -194,11 +204,12 @@ class HackRFReceiver:
         time.sleep(0.2)
         self.start()
 
-    def close(self, pyhackrf):
+    def close(self, pyhackrf=None):
         try:
             self.sdr.pyhackrf_stop_rx()
             self.sdr.pyhackrf_close()
-            pyhackrf.pyhackrf_exit()
+            if pyhackrf is not None:
+                pyhackrf.pyhackrf_exit()
         except Exception:
             pass
 
@@ -233,14 +244,146 @@ class HackRFReceiver:
         return samples
 
 
+class PlutoReceiver:
+    """ADALM-Pluto / Pluto+ / "Pluto Sky" via pyadi-iio, with the same
+    capture(center_hz, num_samples) interface as HackRFReceiver.
+
+    Lessons kept from the earlier plutosky.py, which were found the hard way:
+      * a dead USB-network link can make rx() hang forever instead of
+        raising, so every read runs on a worker thread with a timeout
+      * a "broken pipe" (libiio READ LINE -32) means that connection object
+        is dead - reconnect at once rather than retrying it
+      * don't soft-reset USB; it can leave the Pluto's network stack dead
+    Improvements over it: ~128 averaged FFTs per hop instead of one raw
+    FFT, only the flat middle ~14MHz of each 20MHz capture is used, and
+    the first buffer after every retune is thrown away (it can still hold
+    samples from the previous frequency)."""
+
+    kind = "pluto"
+    FULL_SCALE = 2048.0          # AD936x 12-bit samples -> +/-1.0
+    RF_BANDWIDTH_HZ = 16_000_000  # analog filter; we use the middle +/-7MHz
+
+    def __init__(self, uri="ip:192.168.2.1", gain_db=40, rx_timeout_s=5.0, reconnect_delay_s=3.0):
+        self.uri = uri
+        self.gain_db = gain_db
+        self.rx_timeout_s = rx_timeout_s
+        self.reconnect_delay_s = reconnect_delay_s
+        self.dev = None
+        self.buffer_size = None
+        self.lo = None
+        self.last_attempt = 0.0
+        self.connect()
+
+    @classmethod
+    def open(cls, **kw):
+        return cls(**kw)
+
+    def connect(self):
+        import adi
+        self.last_attempt = time.time()
+        self.close()
+        dev = adi.Pluto(self.uri)
+        dev.sample_rate = int(SAMPLE_RATE_HZ)
+        dev.rx_rf_bandwidth = int(self.RF_BANDWIDTH_HZ)
+        dev.gain_control_mode_chan0 = "manual"
+        dev.rx_hardwaregain_chan0 = int(self.gain_db)
+        try:
+            dev._rxadc.set_kernel_buffers_count(1)   # fewer stale buffers queued
+        except Exception:
+            pass
+        self.dev, self.buffer_size, self.lo = dev, None, None
+
+    def close(self, *_):
+        if self.dev is not None:
+            try:
+                self.dev.rx_destroy_buffer()
+            except Exception:
+                pass
+        self.dev = None
+
+    def _rx(self):
+        result = {}
+
+        def worker():
+            try:
+                result["iq"] = self.dev.rx()
+            except Exception as e:
+                result["error"] = e
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        t.join(self.rx_timeout_s)
+        if t.is_alive():
+            raise TimeoutError(f"Pluto rx() hung for {self.rx_timeout_s}s - connection treated as dead")
+        if "error" in result:
+            raise result["error"]
+        return result["iq"]
+
+    def capture(self, center_hz, num_samples=NUM_SAMPLES):
+        num_samples = min(num_samples, MAX_CAPTURE_SAMPLES)
+        try:
+            if self.dev is None:
+                if time.time() - self.last_attempt < self.reconnect_delay_s:
+                    raise RuntimeError(f"Pluto at {self.uri} not connected - retrying shortly")
+                self.connect()
+            if self.buffer_size != num_samples:
+                self.dev.rx_destroy_buffer()
+                self.dev.rx_buffer_size = int(num_samples)
+                self.buffer_size = num_samples
+            if self.lo != int(center_hz):
+                self.dev.rx_lo = int(center_hz)
+                self.lo = int(center_hz)
+                self._rx()                     # discard: may predate the retune
+            iq = np.asarray(self._rx())
+        except Exception as e:
+            self.dev = None                    # next capture reconnects
+            raise RuntimeError(f"Pluto read failed at {center_hz / 1e6:.1f}MHz: {e}")
+        if len(iq) < num_samples // 2:
+            raise RuntimeError(f"Pluto returned only {len(iq)}/{num_samples} samples")
+        return (iq / self.FULL_SCALE).astype(np.complex64)
+
+
+def open_receiver(sdr="hackrf", lna=16, vga=20, amp=False, hackrf_serial=None,
+                  pluto_uri="ip:192.168.2.1", pluto_gain=40):
+    """Open a HackRF or a Pluto - everything after this is the same."""
+    if sdr == "hackrf":
+        from python_hackrf import pyhackrf
+        return HackRFReceiver.open(pyhackrf, serial=hackrf_serial, lna_gain=lna, vga_gain=vga, amp=amp)
+    if sdr == "pluto":
+        return PlutoReceiver.open(uri=pluto_uri, gain_db=pluto_gain)
+    raise ValueError(f"unknown SDR type {sdr!r} (use hackrf or pluto)")
+
+
+def add_sdr_args(ap):
+    """Command-line options shared by every program that opens an SDR."""
+    ap.add_argument("--sdr", choices=["hackrf", "pluto"], default="hackrf", help="receiver type (default hackrf)")
+    ap.add_argument("--hackrf-serial", help="HackRF serial number, if several are plugged in (see hackrf_info)")
+    ap.add_argument("--lna", type=int, default=16, help="HackRF LNA gain 0-40 dB, steps of 8 (default 16)")
+    ap.add_argument("--vga", type=int, default=20, help="HackRF VGA gain 0-62 dB, steps of 2 (default 20)")
+    ap.add_argument("--amp", action="store_true", help="HackRF +14dB front-end amp (weak 5.8GHz; can overload)")
+    ap.add_argument("--pluto-uri", default="ip:192.168.2.1",
+                    help="Pluto address: ip:192.168.2.1 (default), ip:192.168.3.1 for a second one, or usb:x.y.z")
+    ap.add_argument("--pluto-gain", type=int, default=40, help="Pluto RX gain 0-70 dB (default 40)")
+    ap.add_argument("--level-offset-db", type=float, default=0.0,
+                    help="added to this sensor's signal levels so different SDRs/antennas compare fairly "
+                         "for positioning (see docs/SENSOR_NETWORK.md)")
+
+
+def receiver_from_args(args):
+    return open_receiver(args.sdr, lna=args.lna, vga=args.vga, amp=args.amp, hackrf_serial=args.hackrf_serial,
+                         pluto_uri=args.pluto_uri, pluto_gain=args.pluto_gain)
+
+
 # ======================== Spectrum ======================== #
 
-def hop_spectrum(samples, center_hz):
+def hop_spectrum(samples, center_hz, with_segments=False):
     """Averaged PSD of one hop, trimmed to the kept slice, DC interpolated.
-    Returns (freqs_hz, power_db)."""
+    Returns (freqs_hz, power_db), plus - if with_segments - the per-segment
+    power (n_segments x kept bins, linear) used to measure airtime: how
+    much of the ~6.5ms capture each signal was actually transmitting."""
     n_seg = len(samples) // FFT_SIZE
     seg = samples[:n_seg * FFT_SIZE].reshape(n_seg, FFT_SIZE) * np.hanning(FFT_SIZE)
-    power = np.fft.fftshift(np.mean(np.abs(np.fft.fft(seg, axis=1)) ** 2, axis=0))
+    seg_power = np.fft.fftshift(np.abs(np.fft.fft(seg, axis=1)) ** 2, axes=1)
+    power = np.mean(seg_power, axis=0)
     db = 10 * np.log10(power + 1e-12)
     offsets = (np.arange(FFT_SIZE) - FFT_SIZE // 2) * BIN_HZ
 
@@ -249,6 +392,8 @@ def hop_spectrum(samples, center_hz):
     db[dc] = np.linspace(db[lo - 1], db[hi + 1], dc.sum() + 2)[1:-1]
 
     keep = slice(FFT_SIZE // 2 - KEEP_HALF_BINS, FFT_SIZE // 2 + KEEP_HALF_BINS)
+    if with_segments:
+        return center_hz + offsets[keep], db[keep], seg_power[:, keep].astype(np.float32)
     return center_hz + offsets[keep], db[keep]
 
 
@@ -256,15 +401,19 @@ def sweep_band(receiver, band):
     """Hop across one band. Returns a dict with the stitched spectrum, the
     per-bin noise floor and every hop's raw samples."""
     lo_hz, hi_hz = BANDS[band]
-    freqs, dbs, floors, hops = [], [], [], []
+    freqs, dbs, floors, hops, segs = [], [], [], [], []
     for center in plan_hops(lo_hz, hi_hz):
         samples = receiver.capture(center)
-        f, db = hop_spectrum(samples, center)
+        f, db, sp = hop_spectrum(samples, center, with_segments=True)
         freqs.append(f)
         dbs.append(db)
+        segs.append(sp)
         floors.append(float(np.percentile(db, 20)))
         hops.append((center, samples))
-    return build_band_result(band, freqs, dbs, floors, hops)
+    result = build_band_result(band, freqs, dbs, floors, hops)
+    seg = np.concatenate(segs, axis=1)
+    result["seg_power"] = seg[:, result["_inside"]]
+    return result
 
 
 RAW_IQ_POINTS = 256
@@ -301,7 +450,8 @@ def raw_view(result, clusters, extra=None):
         iq = {"center_mhz": round(center / 1e6, 3), "sample_rate_hz": SAMPLE_RATE_HZ,
               "i": [round(float(v), 4) for v in seg.real], "q": [round(float(v), 4) for v in seg.imag]}
 
-    out = {"clusters": sorted(clusters, key=lambda c: -c["above_noise_db"])[:25], "hops": hops, "iq": iq}
+    public = [{k: v for k, v in c.items() if not k.startswith("_")} for c in clusters]
+    out = {"clusters": sorted(public, key=lambda c: -c["above_noise_db"])[:40], "hops": hops, "iq": iq}
     if extra:
         out.update(extra)
     return out
@@ -320,6 +470,7 @@ def build_band_result(band, freqs, dbs, floors, hops):
     nf = np.concatenate([np.full(len(x), fl) for x, fl in zip(freqs, hop_floor)])
     inside = (f >= lo_hz) & (f < hi_hz)
     return {
+        "_inside": inside,
         "band": band,
         "hop_floors": floors,
         "freqs_hz": f[inside],
@@ -328,6 +479,95 @@ def build_band_result(band, freqs, dbs, floors, hops):
         "noise_floor_db": band_floor,
         "hops": hops,
     }
+
+
+# ======================== Duty cycle & airtime ======================== #
+
+# Two separate questions, because neither alone separates a video link
+# from busy WiFi:
+#   duty cycle - over the last DUTY_WINDOW_S, in what % of sweeps was this
+#                frequency busy? (a video link: ~every sweep)
+#   airtime    - within this sweep's ~6.5ms capture, what % of the time was
+#                it actually transmitting? (a video link: ~100%; WiFi data
+#                comes in packets with gaps)
+# "Busy" uses the same test as signal detection (>= OCCUPIED_DB above the
+# local noise floor), not a separate fixed +35dB bar - the earlier
+# client.py's 35dB bar meant most real signals never counted as active.
+DUTY_WINDOW_S = 30.0
+DUTY_BIN_HZ = 500_000
+DUTY_MIN_SWEEPS = 8            # below this, report "collecting" rather than a %
+CONTINUOUS_PCT = 80.0          # duty AND airtime at least this -> continuous
+BURSTY_PCT = 40.0              # duty OR airtime below this -> bursty
+
+
+class DutyTracker:
+    """Per band: which 500kHz slices were busy in each recent sweep."""
+
+    def __init__(self):
+        from collections import deque
+        self.history = deque()      # (time, start_hz, busy bool array)
+
+    def update(self, result, now=None):
+        now = now if now is not None else time.time()
+        f, rel = result["freqs_hz"], result["power_db"] - result["noise_db"]
+        per = max(1, int(round(DUTY_BIN_HZ / BIN_HZ)))
+        n = len(rel) // per * per
+        busy = (rel[:n].reshape(-1, per).max(axis=1) > OCCUPIED_DB)
+        self.history.append((now, float(f[0]), busy))
+        while self.history and now - self.history[0][0] > DUTY_WINDOW_S:
+            self.history.popleft()
+
+    def duty(self, lo_hz, hi_hz):
+        """(percent or None, sweeps in window) for the core of a signal.
+
+        Per sweep, the signal counts as present if its core (middle half)
+        is busy: any core slice for a narrow signal, at least half of them
+        for a wide one. (Taking a median ACROSS slices, as the earlier
+        client.py's averaging effectively did, reads a constant tone that
+        sits on a slice boundary as 50% - found in testing.)"""
+        if not self.history:
+            return None, 0
+        width = hi_hz - lo_hz
+        core_lo, core_hi = lo_hz + width * 0.25, hi_hz - width * 0.25   # middle half
+        start = self.history[-1][1]
+        i0 = int((core_lo - start) // DUTY_BIN_HZ)
+        i1 = int((core_hi - start) // DUTY_BIN_HZ)
+        present = []
+        for _, st, busy in self.history:
+            if st != start:
+                continue
+            core = busy[max(i0, 0):min(i1, len(busy) - 1) + 1]
+            if len(core) == 0:
+                continue
+            present.append(core.any() if len(core) <= 2 else core.mean() >= 0.5)
+        n = len(present)
+        if n < DUTY_MIN_SWEEPS:
+            return None, n
+        return round(100.0 * sum(present) / n, 1), n
+
+
+def airtime_pct(result, lo_idx, hi_idx):
+    """% of this capture's ~0.05ms time slices in which the signal's core
+    was >= OCCUPIED_DB above the noise floor."""
+    seg = result.get("seg_power")
+    if seg is None or hi_idx < lo_idx:
+        return None
+    width = hi_idx - lo_idx + 1
+    a = lo_idx + width // 4
+    b = max(a, hi_idx - width // 4)
+    core = seg[:, a:b + 1].mean(axis=1)
+    floor_lin = 10 ** (float(np.mean(result["noise_db"][a:b + 1])) / 10)
+    return round(100.0 * float(np.mean(core > floor_lin * 10 ** (OCCUPIED_DB / 10))), 1)
+
+
+def persistence_label(duty, air):
+    if duty is None or air is None:
+        return "collecting"
+    if duty >= CONTINUOUS_PCT and air >= CONTINUOUS_PCT:
+        return "continuous"
+    if duty < BURSTY_PCT or air < BURSTY_PCT:
+        return "bursty"
+    return "intermittent"
 
 
 # ======================== Clusters & classification ======================== #
@@ -360,6 +600,7 @@ def find_clusters(freqs_hz, power_db, noise_db):
                         peak_db - float(np.mean(seg[-edge_bins:])))
         bw_mhz = float(freqs_hz[end] - freqs_hz[start]) / 1e6
         clusters.append({
+            "_lo_idx": int(start), "_hi_idx": int(end),
             "center_mhz": round(float(freqs_hz[start] + freqs_hz[end]) / 2e6, 3),
             "peak_mhz": round(float(freqs_hz[start + peak_rel]) / 1e6, 3),
             "peak_db": round(peak_db, 1),
@@ -615,21 +856,110 @@ def cluster_detection(band, c, label, conf, method, sig=None, channel=None,
     }
 
 
-def detections_for_band(result, signatures=(), modulation_analyzer=None):
-    """Classify every cluster in a swept band. Returns (detections, clusters)."""
+VIDEO_MIN_BANDWIDTH_MHZ = 5.0
+# A flat (OFDM-like) shape is weak evidence on its own - WiFi has it too -
+# so it can't reach "high" without the duty cycle showing a continuous
+# transmitter. (Seen in testing: bursty WiFi scored 85% on shape alone.)
+DIGITAL_SHAPE_MAX_CONF = 0.6
+
+
+def video_class(c):
+    """What the Video Detections tab files a wide signal under (shape only)."""
+    if c["bandwidth_mhz"] < VIDEO_MIN_BANDWIDTH_MHZ:
+        return None
+    if c["crest_factor_db"] >= 7.0 and c["edge_drop_db"] >= 10.0:
+        return "Analog video"
+    if c["crest_factor_db"] < 5.0 and c["edge_drop_db"] < 8.0 and 10.0 <= c["bandwidth_mhz"] <= 40.0:
+        return "Digital video"
+    return "Wideband data"
+
+
+def _pct(x):
+    return f"{x:.0%}"
+
+
+def detections_for_band(result, signatures=(), modulation_analyzer=None, duty_tracker=None):
+    """Measure and classify every cluster in a swept band.
+    Returns (detections, clusters). Every cluster gets duty cycle, airtime,
+    WiFi-channel and video-type annotations (shown on the Raw Data and
+    Video Detections pages); clusters that match a rule also become
+    detections with a confidence % and the list of reasons behind it."""
     clusters = find_clusters(result["freqs_hz"], result["power_db"], result["noise_db"])
+    band = result["band"]
+    if duty_tracker is not None:
+        duty_tracker.update(result)
+    for c in clusters:
+        lo_hz, hi_hz = result["freqs_hz"][c["_lo_idx"]], result["freqs_hz"][c["_hi_idx"]]
+        duty, n = duty_tracker.duty(lo_hz, hi_hz) if duty_tracker is not None else (None, 0)
+        air = airtime_pct(result, c["_lo_idx"], c["_hi_idx"])
+        c.update(duty_cycle_pct=duty, duty_sweeps=n, airtime_pct=air, persistence=persistence_label(duty, air),
+                 video_class=video_class(c),
+                 wifi_channel_mhz=nearest_channel(c["center_mhz"], WIFI_CHANNELS_MHZ, WIFI_CHANNEL_TOLERANCE_MHZ))
+
     detections = []
     for c in clusters:
-        cls = classify_cluster(c, result["band"], signatures)
+        cls = classify_cluster(c, band, signatures)
         if cls is None:
             continue
         label, conf, method, sig, channel = cls
         c["classified_as"] = label
-        wifi_ch = nearest_channel(c["center_mhz"], WIFI_CHANNELS_MHZ, WIFI_CHANNEL_TOLERANCE_MHZ)
-        if wifi_ch is not None and method == "shape":
-            conf = round(conf * 0.5, 3)
-        fpv_ch = nearest_channel(c["center_mhz"], FPV_CHANNELS_MHZ, FPV_CHANNEL_TOLERANCE_MHZ) \
-            if is_5ghz(result["band"]) else None
+        reasons = []
+        if method == "calibrated":
+            reasons.append({"text": f"Matches your calibrated signature '{sig['name']}': peak on its channel "
+                                    f"{channel} MHz, and width/crest/edge are inside the ranges it learned",
+                            "effect": f"{_pct(conf)} (signature's own confidence)"})
+        elif label.startswith("Analog"):
+            reasons.append({"text": f"Shaped like analog (FM) video: peaked in the middle (crest "
+                                    f"{c['crest_factor_db']} dB, needs >= 7), tapering edges (edge drop "
+                                    f"{c['edge_drop_db']} dB, needs >= 10), {c['bandwidth_mhz']} MHz wide (needs >= 5)",
+                            "effect": f"start at {_pct(conf)} (stronger shape = higher)"})
+        else:
+            reasons.append({"text": f"Flat-topped like digital (OFDM) video: crest {c['crest_factor_db']} dB "
+                                    f"(needs < 5), edge drop {c['edge_drop_db']} dB (needs < 8), "
+                                    f"{c['bandwidth_mhz']} MHz wide (needs 10-40) - WiFi has this shape too",
+                            "effect": f"start at {_pct(conf)}"})
+
+        wifi_ch = c["wifi_channel_mhz"]
+        fpv_ch = nearest_channel(c["center_mhz"], FPV_CHANNELS_MHZ, FPV_CHANNEL_TOLERANCE_MHZ) if is_5ghz(band) else None
+        if method == "shape":
+            digital = not label.startswith("Analog")
+            p = c["persistence"]
+            if digital and conf > DIGITAL_SHAPE_MAX_CONF:
+                conf = DIGITAL_SHAPE_MAX_CONF
+                reasons.append({"text": "A flat shape alone is weak evidence (WiFi looks the same), so it is capped "
+                                        "until the duty cycle shows a continuous transmitter",
+                                "effect": f"capped at {_pct(DIGITAL_SHAPE_MAX_CONF)}"})
+            if fpv_ch is not None and not digital:
+                conf = min(0.95, conf + 0.1)
+                reasons.append({"text": f"Centred on a standard FPV video channel ({fpv_ch} MHz)", "effect": "+10%"})
+            if p == "continuous":
+                boost = 0.25 if digital else 0.1
+                conf = min(0.95, conf + boost)
+                reasons.append({"text": f"Continuous transmitter: busy in {c['duty_cycle_pct']}% of sweeps over 30 s and "
+                                        f"transmitting {c['airtime_pct']}% of the time - like a video link, unlike WiFi",
+                                "effect": f"+{boost:.0%}"})
+            elif p == "bursty":
+                conf *= 0.5
+                reasons.append({"text": f"Bursty: busy in {c['duty_cycle_pct']}% of sweeps, transmitting "
+                                        f"{c['airtime_pct']}% of the time - typical of WiFi data, not a video link",
+                                "effect": "halved"})
+            elif p == "intermittent":
+                if digital:
+                    conf *= 0.8
+                reasons.append({"text": f"Only partly continuous: busy in {c['duty_cycle_pct']}% of sweeps, "
+                                        f"{c['airtime_pct']}% airtime", "effect": "x0.8" if digital else "no change"})
+            else:
+                reasons.append({"text": f"Duty cycle still being measured ({c['duty_sweeps']}/{DUTY_MIN_SWEEPS} sweeps)",
+                                "effect": "no change yet"})
+            if wifi_ch is not None:
+                if p == "continuous":
+                    reasons.append({"text": f"Sits on WiFi channel {wifi_ch} MHz, but it is continuous and WiFi "
+                                            "isn't - so not treated as WiFi", "effect": "no penalty"})
+                else:
+                    conf *= 0.5
+                    reasons.append({"text": f"Centred on WiFi channel {wifi_ch} MHz - quite likely just WiFi",
+                                    "effect": "halved"})
+        conf = round(conf, 3)
 
         modulation_hint = None
         if modulation_analyzer is not None and result.get("hops"):
@@ -642,10 +972,10 @@ def detections_for_band(result, signatures=(), modulation_analyzer=None):
             except Exception as e:
                 modulation_hint = {"error": str(e)}
 
-        if fpv_ch is not None and method == "shape" and label.startswith("Analog"):
-            conf = round(min(0.95, conf + 0.1), 3)   # sits on a standard FPV video channel
-        detections.append(cluster_detection(result["band"], c, label, conf, method, sig, channel,
-                                            modulation_hint, wifi_ch, fpv_ch))
+        det = cluster_detection(band, c, label, conf, method, sig, channel, modulation_hint, wifi_ch, fpv_ch)
+        det.update(reasons=reasons, duty_cycle_pct=c["duty_cycle_pct"], airtime_pct=c["airtime_pct"],
+                   persistence=c["persistence"])
+        detections.append(det)
     return detections, clusters
 
 

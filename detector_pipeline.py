@@ -37,6 +37,7 @@ class BandState:
         self.trackers = {}
         self.learn_sweeps = learn_sweeps
         self.control = control_link.ControlLinkDetector()
+        self.duty = rf.DutyTracker()
         self.link_span = None        # (lo_mhz, hi_mhz) of the last hopping link
         self.link_span_ttl = 0       # sweeps left before that span is forgotten
 
@@ -78,14 +79,27 @@ def fuse_band(band, dets, clusters, state, signatures=()):
         if hop:
             det = rf.cluster_detection(band, hop["cluster"], kind, 0.85, "hopping")
             det["channels_seen"] = hop["channels_mhz"]
+            det["reasons"] = [
+                {"text": f"A strong (>= {rf.HOP_MIN_ABOVE_NOISE_DB:.0f} dB above noise), wide (>= {rf.HOP_MIN_BW_MHZ:.0f} MHz) "
+                         f"signal was present in {hop['present']} of the last {hop['window']} sweeps", "effect": None},
+                {"text": f"Its peak jumped between {len(hop['channels_mhz'])} frequencies that are normally quiet here: "
+                         + ", ".join(f"{c:.0f}" for c in hop["channels_mhz"]) + " MHz", "effect": None},
+                {"text": "A WiFi router stays on one channel; jumping between new channels is how this kind of "
+                         "drone video link behaves", "effect": "85%"},
+            ]
         else:
             det = dict(cal_confirmed[1], drone_type=kind)
+            det["reasons"] = list(cal_confirmed[1].get("reasons", []))
         if cal_confirmed:
             sig = cal_confirmed[0]
             det["drone_type"] = f"{kind} - matches calibrated '{sig['name']}'"
             det["confidence"] = max(det["confidence"], float(sig.get("confidence", 0.85)))
             det["signature"] = sig["name"]
             det["channels_seen"] = sorted(set(det.get("channels_seen", [])) | set(cal_confirmed[1]["channels_seen"]))
+            det.setdefault("reasons", []).append(
+                {"text": f"Also matches your calibrated '{sig['name']}' - seen on {len(cal_confirmed[1]['channels_seen'])} "
+                         f"of its learned channels within {sig.get('window_sweeps', 5)} sweeps",
+                 "effect": f"raised to {det['confidence']:.0%}"})
         det["threat_level"] = rf.threat_level(det["confidence"])
         det["track_key"] = f"link:{band}"   # one entry however much it hops
         out.append(det)
@@ -141,7 +155,7 @@ class DetectorPipeline:
                 continue
             result = rf.sweep_band(self.receiver, band)
             spectra[band] = rf.spectrum_summary(result)
-            dets, clusters = rf.detections_for_band(result, self.signatures, self.analyzer)
+            dets, clusters = rf.detections_for_band(result, self.signatures, self.analyzer, st.duty)
             spectra[band]["raw"] = rf.raw_view(result, clusters)
             found.extend(fuse_band(band, dets, clusters, st, self.signatures))
             spectra[band]["background"] = {
@@ -202,6 +216,14 @@ class DetectorPipeline:
             "modulation_hint": None,
             "channels_seen": link["channels_mhz"],
             "packets_per_sweep": link["packets_per_sweep"],
+            "reasons": [
+                {"text": f"Short packets in {link['present']} of the last {link['window']} sweeps "
+                         f"(~{link['packets_per_sweep']} per 26 ms look)", "effect": None},
+                {"text": f"They jump between {len(link['channels_mhz'])} channels spread over {link['span_mhz']} MHz - "
+                         "alarms, meters and LoRaWAN sensors use one or a few fixed channels", "effect": None},
+                {"text": "That pattern matches an ExpressLRS/Crossfire control link (not yet tested on a real one)",
+                 "effect": "80%"},
+            ],
             "track_key": f"control:{band}",
         }
         return summary, det
@@ -226,4 +248,8 @@ def correlate(found):
         d["drone_type"] += " + video link active: likely FPV drone"
     for d in video:
         d["drone_type"] += " + control link active"
+    for d in control + video:
+        d.setdefault("reasons", []).append(
+            {"text": "An 868 MHz control link and a video link are active at the same time at this sensor - "
+                     "the strongest sign of an FPV drone", "effect": "raised to 92%"})
 

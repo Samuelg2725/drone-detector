@@ -289,9 +289,7 @@ def main():
     ap.add_argument("--distance-m", type=float, default=3.0,
                     help="how far the drone is from the antenna in the DRONE phase (default 3m) - "
                          "used for the dashboard's rough distance estimate")
-    ap.add_argument("--lna", type=int, default=16)
-    ap.add_argument("--vga", type=int, default=20)
-    ap.add_argument("--amp", action="store_true")
+    rf.add_sdr_args(ap)
     ap.add_argument("--reanalyze", metavar="SESSION_JSON", help="re-run the analysis on a saved session")
     ap.add_argument("--no-save", action="store_true", help="analyse only, don't write drone_signatures.json")
     args = ap.parse_args()
@@ -302,10 +300,9 @@ def main():
         with open(args.reanalyze) as fh:
             session = json.load(fh)
     else:
-        from python_hackrf import pyhackrf
         bands = rf.bands_from_args(args.bands)
-        print("Connecting to HackRF... (make sure drone_dashboard_backend.py is NOT running)")
-        receiver = rf.HackRFReceiver.open(pyhackrf, lna_gain=args.lna, vga_gain=args.vga, amp=args.amp)
+        print(f"Connecting to {args.sdr}... (make sure nothing else is using it)")
+        receiver = rf.receiver_from_args(args)
         try:
             input("\nSTEP 1/2: switch the drone, its controller and any goggles OFF, then press Enter...")
             baseline = record_phase(receiver, bands, args.seconds, "BASELINE (drone off)")
@@ -313,9 +310,10 @@ def main():
                   "antenna, then press Enter...")
             drone = record_phase(receiver, bands, args.seconds, "DRONE (drone on)")
         finally:
-            receiver.close(pyhackrf)
+            receiver.close()
         session = {"created": time.strftime("%Y-%m-%dT%H:%M:%S"), "name": args.name,
-                   "gains": {"lna": args.lna, "vga": args.vga, "amp": args.amp},
+                   "gains": {"sdr": args.sdr, "lna": args.lna, "vga": args.vga, "amp": args.amp,
+                             "pluto_gain": args.pluto_gain},
                    "baseline": baseline, "drone": drone}
         os.makedirs("calibration", exist_ok=True)
         path = os.path.join("calibration", f"session_{time.strftime('%Y%m%d_%H%M%S')}.json")

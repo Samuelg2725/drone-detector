@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-sensor_node.py - runs on each sensor (Raspberry Pi + HackRF) and reports
+sensor_node.py - runs on each sensor (Raspberry Pi + HackRF or Pluto) and reports
 to the central server (drone_dashboard_backend.py).
 
 Each sweep it sends: the sensor's position, its live spectrum (power per
@@ -8,7 +8,9 @@ frequency for every band) and any drone detections, including how strong
 each one is - which is what lets the server work out which sensor is
 nearest and estimate a rough position.
 
-Needs only: numpy, python_hackrf (no web server on the Pi).
+Needs only: numpy plus python_hackrf (HackRF) or pyadi-iio (Pluto) - no
+web server on the Pi. One process per SDR: a Pi with a HackRF and a Pluto
+runs two of these with different --id.
 
 Usage:
     python3 sensor_node.py --id north-wall --lat 51.50720 --lon -0.12760 \\
@@ -41,18 +43,15 @@ def main():
     ap.add_argument("--server", required=True, help="central server URL, e.g. http://192.168.1.50:8000")
     ap.add_argument("--bands", nargs="+", choices=list(rf.BAND_ARGS), default=rf.DEFAULT_BAND_ARGS,
                     help="bands to sweep: 868 2.4 5.2 5.8 (default) or 5.8wide (5.645-5.925GHz)")
-    ap.add_argument("--lna", type=int, default=16)
-    ap.add_argument("--vga", type=int, default=20)
-    ap.add_argument("--amp", action="store_true")
+    rf.add_sdr_args(ap)
     ap.add_argument("--learn-sweeps", type=int, default=20,
                     help="sweeps spent learning the background at startup, drones off (default 20)")
     args = ap.parse_args()
 
-    from python_hackrf import pyhackrf
     url = f"{args.server.rstrip('/')}/api/sensors/{args.id}/report"
     bands = rf.bands_from_args(args.bands)
-    print(f"[{args.id}] Connecting to HackRF...")
-    receiver = rf.HackRFReceiver.open(pyhackrf, lna_gain=args.lna, vga_gain=args.vga, amp=args.amp)
+    print(f"[{args.id}] Connecting to {args.sdr}...")
+    receiver = rf.receiver_from_args(args)
     pipeline = DetectorPipeline(receiver, bands, rf.load_signatures(), args.learn_sweeps)
     print(f"[{args.id}] Reporting to {url}. Learning background for {args.learn_sweeps} sweeps - keep drones OFF.")
 
@@ -64,7 +63,8 @@ def main():
             except Exception as e:
                 print(f"[{args.id}] Scan error: {e}")
                 report = {"error": str(e)}
-            report.update({"lat": args.lat, "lon": args.lon})
+            report.update({"lat": args.lat, "lon": args.lon, "sdr": args.sdr,
+                           "level_offset_db": args.level_offset_db})
             try:
                 post(url, report)
                 if failures:
@@ -82,7 +82,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        receiver.close(pyhackrf)
+        receiver.close()
 
 
 if __name__ == "__main__":

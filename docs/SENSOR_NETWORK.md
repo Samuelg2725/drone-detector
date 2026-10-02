@@ -21,7 +21,7 @@ python3 drone_dashboard_backend.py --no-local-sensor
 Open `http://<server-ip>:8000`. Leave out `--no-local-sensor` if a HackRF
 is plugged into the server too (it then counts as sensor `local`).
 
-## 2. Each Raspberry Pi sensor
+## 2. Each Raspberry Pi sensor (HackRF or Pluto)
 
 Raspberry Pi 4 or 5 (the 5 is recommended: each sweep does ~28 FFT
 batches). Use a powered USB hub or the Pi's own USB 3 port for the HackRF.
@@ -40,6 +40,40 @@ python3 sensor_node.py --id north-wall --lat 51.50720 --lon -0.12760 \
 - Keep drones off for the first ~25s while each sensor learns its background.
 - Use the same `--lna/--vga/--amp` on every sensor, and the same antenna type,
   so their levels are comparable.
+
+### Using a Pluto instead (ADALM-Pluto, Pluto+, "Pluto Sky")
+
+```
+sudo apt install libiio-utils python3-libiio
+pip install pyadi-iio --break-system-packages
+iio_info -s                      # should list the Pluto (usb:... or ip:192.168.2.1)
+python3 sensor_node.py --id gate --sdr pluto --pluto-uri ip:192.168.2.1 \
+                       --pluto-gain 40 --server http://192.168.1.50:8000
+```
+The Pluto must be able to tune 5.8GHz (the common "AD9364" firmware unlock).
+The single-machine dashboard works the same way:
+`python3 drone_dashboard_backend.py --sdr pluto`.
+
+### Several SDRs on one Pi
+
+Run one `sensor_node.py` per SDR, each with its own `--id`:
+```
+python3 sensor_node.py --id north-hackrf --sdr hackrf --hackrf-serial <serial from hackrf_info> --server ...
+python3 sensor_node.py --id north-pluto  --sdr pluto  --pluto-uri ip:192.168.2.1 --server ...
+python3 sensor_node.py --id north-pluto2 --sdr pluto  --pluto-uri ip:192.168.3.1 --server ...
+```
+(Each extra Pluto needs its own IP - set in its config.txt - or use its
+`usb:` URI from `iio_info -s`.)
+
+### Matching levels between SDRs (for positioning)
+
+A Pluto and a HackRF - or two antennas - report different levels for the
+same drone at the same distance. Detection doesn't care, but positioning
+compares levels between sensors, so match them once:
+1. Put the drone (transmitting) 5m from sensor A, note its level on the
+   dashboard's "Power at each sensor" line.
+2. Move it 5m from sensor B, same height and orientation, note the level.
+3. Start B with `--level-offset-db <A's level - B's level>`.
 
 To start it at boot, `/etc/systemd/system/drone-sensor.service`:
 ```
@@ -67,6 +101,14 @@ then `sudo systemctl enable --now drone-sensor`.
 
 A control link and a video link seen together by one sensor are marked
 "likely FPV drone" and raised to 92%.
+
+**Duty cycle and airtime** decide how much a shape match is trusted:
+duty = % of sweeps over 30s the signal's core was busy; airtime = % of
+one 6.5ms capture it was transmitting. Continuous (both >= 80%) raises a
+shape match; bursty (either < 40%) halves it; the WiFi-channel penalty
+only applies to signals that aren't continuous. Every detection on the
+dashboard has a "Why it says this" list, and the How It Works page explains
+all the rules.
 
 `--bands 5.8wide` sweeps 5.645-5.925GHz instead of 5.72-5.855GHz, which also
 catches analog FPV set to channels outside that range (e.g. 5658, 5695,

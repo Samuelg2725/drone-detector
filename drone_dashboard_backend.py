@@ -142,6 +142,8 @@ def sensor_public(s, now=None):
         "bands": s.get("bands", []),
         "last_error": s.get("last_error"),
         "reports": s.get("reports", 0),
+        "sdr": s.get("sdr"),
+        "level_offset_db": s.get("level_offset_db", 0.0),
     }
 
 
@@ -181,6 +183,9 @@ def record_detection(det, sensor_id):
             d["threat_level"] = rf.threat_level(d["confidence"])
             for k in ("frequency_mhz", "power_db", "above_noise_db", "bandwidth_mhz"):
                 d[k] = det[k]
+            for k in ("reasons", "duty_cycle_pct", "airtime_pct", "persistence"):
+                if k in det:
+                    d[k] = det[k]
             if det.get("channels_seen"):
                 d["channels_seen"] = det["channels_seen"]
             add_level(d, sensor_id, det, now)
@@ -201,7 +206,10 @@ def record_detection(det, sensor_id):
 
 def add_level(track, sensor_id, det, now):
     hist = track["_levels"].setdefault(sensor_id, deque(maxlen=LEVEL_HISTORY))
-    hist.append((now, det["above_noise_db"], det.get("estimated_distance_m")))
+    # Per-sensor offset so a Pluto and a HackRF (or different antennas)
+    # hearing the same drone at the same distance report the same level.
+    offset = sensors.get(sensor_id, {}).get("level_offset_db", 0.0)
+    hist.append((now, det["above_noise_db"] + offset, det.get("estimated_distance_m")))
 
 
 def sensor_levels(track, now):
@@ -239,6 +247,10 @@ def public(det):
     out["nearest_sensor"] = levels[0]["sensor_id"] if levels else None
     out["estimated_distance_m"] = levels[0]["estimated_distance_m"] if levels else None
     out["trend"] = det.get("_trend", "steady")
+    if len(levels) > 1:
+        out["reasons"] = list(out.get("reasons") or []) + [{
+            "text": f"Heard by {len(levels)} sensors at once (loudest: {levels[0]['sensor_id']} "
+                    f"+{levels[0]['level_db']} dB) - used for the position estimate", "effect": None}]
     out["trend_db_per_s"] = det.get("_trend_rate")
     return out
 
@@ -332,6 +344,84 @@ def current_metrics():
     }
 
 
+# ======================== Signal log & video detections ======================== #
+
+SIGNAL_LOG_MAX = 5000
+VIDEO_MATCH_MHZ = 3.0          # same transmitter if centre within this
+VIDEO_FORGET_S = 3600          # emitters not seen for an hour are dropped
+signal_log = deque(maxlen=SIGNAL_LOG_MAX)
+video_emitters = []            # newest activity first
+
+
+def log_signals(sensor_id, report):
+    """Every signal every sensor saw this sweep -> the Raw Data log, and
+    wide ones -> the Video Detections list. Returns the new log entries."""
+    now = time.time()
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+    entries = []
+    for band, sp in (report.get("spectra") or {}).items():
+        raw = sp.get("raw") or {}
+        for c in raw.get("clusters", []):
+            entries.append({
+                "t": now, "timestamp": stamp, "sensor_id": sensor_id, "band": band,
+                "frequency_mhz": c["peak_mhz"], "center_mhz": c["center_mhz"], "bandwidth_mhz": c["bandwidth_mhz"],
+                "level_db": c["above_noise_db"], "power_db": c["peak_db"],
+                "crest_factor_db": c["crest_factor_db"], "edge_drop_db": c["edge_drop_db"],
+                "duty_cycle_pct": c.get("duty_cycle_pct"), "airtime_pct": c.get("airtime_pct"),
+                "persistence": c.get("persistence"), "video_class": c.get("video_class"),
+                "classified_as": c.get("classified_as"), "wifi_channel_mhz": c.get("wifi_channel_mhz"),
+                "kind": c.get("video_class") or ("Narrowband" if c["bandwidth_mhz"] < 1 else "Signal"),
+            })
+        for p in raw.get("packets", []):
+            entries.append({
+                "t": now, "timestamp": stamp, "sensor_id": sensor_id, "band": band,
+                "frequency_mhz": p["frequency_mhz"], "center_mhz": p["frequency_mhz"],
+                "bandwidth_mhz": round(p["bandwidth_khz"] / 1000, 3), "level_db": p["above_noise_db"],
+                "power_db": None, "crest_factor_db": None, "edge_drop_db": None, "duty_cycle_pct": None,
+                "airtime_pct": None, "persistence": None, "video_class": None, "classified_as": None,
+                "wifi_channel_mhz": None, "kind": f"868 packet ({p['duration_ms']} ms)",
+            })
+    signal_log.extend(entries)
+    for e in entries:
+        if e["video_class"]:
+            update_video(e)
+    return entries
+
+
+def update_video(e):
+    for v in video_emitters:
+        if (v["sensor_id"] == e["sensor_id"] and v["band"] == e["band"] and v["type"] == e["video_class"]
+                and abs(v["center_mhz"] - e["center_mhz"]) <= VIDEO_MATCH_MHZ):
+            v["detections"] += 1
+            v["last_seen"], v["_last"] = e["timestamp"], e["t"]
+            v["center_mhz"] = round(0.8 * v["center_mhz"] + 0.2 * e["center_mhz"], 3)
+            v["max_level_db"] = max(v["max_level_db"], e["level_db"])
+            for k in ("bandwidth_mhz", "level_db", "crest_factor_db", "edge_drop_db", "duty_cycle_pct",
+                      "airtime_pct", "persistence", "wifi_channel_mhz"):
+                v[k] = e[k]
+            video_emitters.remove(v)
+            video_emitters.insert(0, v)
+            return
+    video_emitters.insert(0, {
+        "id": str(uuid.uuid4())[:8], "sensor_id": e["sensor_id"], "band": e["band"], "type": e["video_class"],
+        "center_mhz": e["center_mhz"], "bandwidth_mhz": e["bandwidth_mhz"], "level_db": e["level_db"],
+        "max_level_db": e["level_db"], "crest_factor_db": e["crest_factor_db"], "edge_drop_db": e["edge_drop_db"],
+        "duty_cycle_pct": e["duty_cycle_pct"], "airtime_pct": e["airtime_pct"], "persistence": e["persistence"],
+        "wifi_channel_mhz": e["wifi_channel_mhz"], "first_seen": e["timestamp"], "last_seen": e["timestamp"],
+        "_last": e["t"], "detections": 1,
+    })
+    while len(video_emitters) > 500:
+        video_emitters.pop()
+
+
+def video_public():
+    now = time.time()
+    video_emitters[:] = [v for v in video_emitters if now - v["_last"] <= VIDEO_FORGET_S]
+    return [dict({k: x for k, x in v.items() if not k.startswith("_")},
+                 active=(now - v["_last"]) <= TRACK_TIMEOUT_S, seen_ago_s=int(now - v["_last"]))
+            for v in video_emitters[:300]]
+
+
 # ======================== Ingesting sensor reports ======================== #
 
 def ingest_report(sensor_id, report):
@@ -348,6 +438,8 @@ def ingest_report(sensor_id, report):
         s["sweep_seconds"] = report.get("sweep_seconds")
         s["learning"] = report.get("learning", False)
         s["last_error"] = report.get("error")
+        s["sdr"] = report.get("sdr", s.get("sdr"))
+        s["level_offset_db"] = float(report.get("level_offset_db") or 0.0)
         if report.get("spectra"):
             s["bands"] = list(report["spectra"])
             spectra[sensor_id] = {
@@ -358,6 +450,10 @@ def ingest_report(sensor_id, report):
                 "bands": report["spectra"],
             }
             broadcast({"type": "spectrum", "data": spectra[sensor_id]})
+
+        entries = log_signals(sensor_id, report)
+        if entries:
+            broadcast({"type": "signals", "data": [{k: v for k, v in e.items() if k != "t"} for e in entries]})
 
         for det in report.get("detections", []):
             det = dict(det)
@@ -389,6 +485,7 @@ def housekeeping_loop():
                 broadcast({"type": "tracks", "data": current_tracks()})
                 broadcast({"type": "metrics", "data": current_metrics()})
                 broadcast({"type": "sensors", "data": all_sensors()})
+                broadcast({"type": "video", "data": video_public()})
         except Exception as e:
             print(f"Housekeeping error: {e}")
         time.sleep(1.0)
@@ -396,12 +493,12 @@ def housekeeping_loop():
 
 # ======================== Local sensor (HackRF on this machine) ======================== #
 
-def local_sensor_loop(pipeline, sensor_id, lat, lon):
+def local_sensor_loop(pipeline, sensor_id, lat, lon, args):
     announced = False
     while True:
         try:
             report = pipeline.sweep()
-            report.update({"lat": lat, "lon": lon})
+            report.update({"lat": lat, "lon": lon, "sdr": args.sdr, "level_offset_db": args.level_offset_db})
             ingest_report(sensor_id, report)
             if not announced and not report["learning"]:
                 announced = True
@@ -474,6 +571,26 @@ def api_spectrum(sensor: str = None):
         return {"success": data is not None, "data": data, "sensors": sorted(spectra)}
 
 
+@app.get("/api/signals")
+def api_signals(limit: int = 2000):
+    with lock:
+        items = list(signal_log)[-limit:]
+    return {"success": True, "data": {"items": [{k: v for k, v in e.items() if k != "t"} for e in reversed(items)]}}
+
+
+@app.get("/api/video")
+def api_video():
+    with lock:
+        return {"success": True, "data": {"items": video_public()}}
+
+
+@app.post("/api/video/clear")
+def api_video_clear():
+    with lock:
+        video_emitters.clear()
+    return {"success": True}
+
+
 @app.get("/api/tracks")
 def api_tracks():
     with lock:
@@ -537,19 +654,15 @@ def api_trends(days: int = 7):
 def parse_args():
     ap = argparse.ArgumentParser(description="Drone detection central server + dashboard")
     ap.add_argument("--no-local-sensor", action="store_true",
-                    help="don't use a HackRF on this machine - only remote sensor_node.py sensors")
-    ap.add_argument("--sensor-id", default="local", help="name of the local HackRF sensor (default 'local')")
+                    help="don't use an SDR on this machine - only remote sensor_node.py sensors")
+    ap.add_argument("--sensor-id", default="local", help="name of the local SDR sensor (default 'local')")
     ap.add_argument("--lat", type=float, help="local sensor latitude (or click the dashboard map)")
     ap.add_argument("--lon", type=float, help="local sensor longitude")
     ap.add_argument("--bands", nargs="+", choices=list(rf.BAND_ARGS), default=rf.DEFAULT_BAND_ARGS,
                     help="bands to sweep: 868 2.4 5.2 5.8 (default) or 5.8wide (5.645-5.925GHz)")
-    ap.add_argument("--lna", type=int, default=16, help="LNA gain 0-40 dB, steps of 8 (default 16)")
-    ap.add_argument("--vga", type=int, default=20, help="VGA gain 0-62 dB, steps of 2 (default 20)")
+    rf.add_sdr_args(ap)
     ap.add_argument("--learn-sweeps", type=int, default=20,
                     help="sweeps spent learning the background at startup, drones off (default 20, ~25s)")
-    ap.add_argument("--amp", action="store_true",
-                    help="enable the HackRF's +14dB front-end amp (helps weak 5.8GHz signals; "
-                         "can overload near strong WiFi)")
     ap.add_argument("--port", type=int, default=8000)
     return ap.parse_args()
 
@@ -562,7 +675,6 @@ if __name__ == "__main__":
 
     receiver = None
     if not args.no_local_sensor:
-        from python_hackrf import pyhackrf
         from detector_pipeline import DetectorPipeline
         analyzer = None
         try:
@@ -572,12 +684,13 @@ if __name__ == "__main__":
             pass  # optional extra - modulation hints only
         signatures = rf.load_signatures()
         bands = rf.bands_from_args(args.bands)
-        print("Connecting to HackRF...")
-        receiver = rf.HackRFReceiver.open(pyhackrf, lna_gain=args.lna, vga_gain=args.vga, amp=args.amp)
+        print(f"Connecting to {args.sdr}...")
+        receiver = rf.receiver_from_args(args)
         pipeline = DetectorPipeline(receiver, bands, signatures, args.learn_sweeps, analyzer)
         lat = args.lat if args.lat is not None else saved_locations.get(args.sensor_id, {}).get("lat")
         lon = args.lon if args.lon is not None else saved_locations.get(args.sensor_id, {}).get("lon")
-        threading.Thread(target=local_sensor_loop, args=(pipeline, args.sensor_id, lat, lon), daemon=True).start()
+        threading.Thread(target=local_sensor_loop, args=(pipeline, args.sensor_id, lat, lon, args),
+                         daemon=True).start()
         for b in bands:
             lo, hi = rf.BANDS[b]
             print(f"Sweeping {b}: {lo / 1e6:.0f}-{hi / 1e6:.0f}MHz in {len(rf.plan_hops(lo, hi))} hops")
@@ -586,7 +699,7 @@ if __name__ == "__main__":
         print(f"Learning the background for the first {args.learn_sweeps} sweeps - keep drones switched OFF "
               f"until it says 'Background learned'.")
     else:
-        print("No local HackRF - waiting for sensor_node.py reports.")
+        print("No local SDR - waiting for sensor_node.py reports.")
 
     print(f"Dashboard: http://localhost:{args.port}")
     print("Sensors report to: http://<this-machine's-IP>:%d/api/sensors/<id>/report" % args.port)
@@ -594,4 +707,4 @@ if __name__ == "__main__":
         uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="warning")
     finally:
         if receiver is not None:
-            receiver.close(pyhackrf)
+            receiver.close()
